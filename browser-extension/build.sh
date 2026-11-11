@@ -7,5 +7,5 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 OUT="$HERE/../dist"
 mkdir -p "$OUT"
 rm -f "$OUT/healthdash-capture-firefox.zip"
-(cd "$HERE/firefox" && zip -q -r -X "$OUT/healthdash-capture-firefox.zip" manifest.json ./*.js ./*.html icon.svg)
+(cd "$HERE/firefox" && zip -q -r -X "$OUT/healthdash-capture-firefox.zip" manifest.json ./*.js ./*.html icon.svg icon-48.png icon-96.png)
 echo "built $(cd "$OUT" && pwd)/healthdash-capture-firefox.zip"
