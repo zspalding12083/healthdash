@@ -102,16 +102,28 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   }
   if(msg.cmd === 'save-tab'){   // the popup's "Save this page" button
     if(!s.on) return {ok: false, error: 'Turn the plugin on first.'};
-    const [tab] = await browser.tabs.query({active: true, currentWindow: true});
-    if(!tab) return {ok: false, error: 'No page open.'};
-    try{
-      await browser.scripting.executeScript({target: {tabId: tab.id}, files: ['capture.js']});
-      const page = await browser.tabs.sendMessage(tab.id, {cmd: 'hd-snapshot'});
-      if(page.textLength < 50) return {ok: false, error: 'This page has almost no text to save.'};
-      seen.delete(page.textHash);   // a deliberate click always sends
-      await savePage(page, 'button');
-      return {ok: true};
-    }catch(e){ return {ok: false, error: 'Firefox does not let the plugin read this page (' + e.message + ').'}; }
+    const tabId = msg.tabId ?? (await browser.tabs.query({active: true, currentWindow: true}))[0]?.id;
+    if(tabId == null) return {ok: false, error: 'No page open.'};
+    let page = null, why = '';
+    // the page script is already running on your portal sites; ask it first
+    try{ page = await browser.tabs.sendMessage(tabId, {cmd: 'hd-snapshot'}); }catch(e){ /* not there yet */ }
+    if(!page){
+      try{
+        await browser.scripting.executeScript({target: {tabId}, files: ['capture.js']});
+        page = await browser.tabs.sendMessage(tabId, {cmd: 'hd-snapshot'});
+      }catch(e){ why = e.message; }
+    }
+    if(!page){
+      const host = msg.host || 'this site';
+      const allowed = msg.origin ? await browser.permissions.contains({origins: [msg.origin]}) : false;
+      return {ok: false, error: allowed
+        ? `Firefox allowed ${host} but still blocked reading the page (${why}). Reload the page and try again.`
+        : `Firefox has not allowed the plugin on ${host}. Press Save again and choose Allow, or add it under Settings > Portal sites. (${why})`};
+    }
+    if(page.textLength < 50) return {ok: false, error: 'This page has almost no text to save.'};
+    seen.delete(page.textHash);   // a deliberate click always sends
+    await savePage(page, 'button');
+    return {ok: true};
   }
   if(msg.cmd === 'test'){        // the settings page's "Test connection" button
     try{

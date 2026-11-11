@@ -43,4 +43,5 @@ $('#test').onclick = async () => {
   $('#testmsg').textContent = r.note;
 };
 
+document.getElementById('ver').textContent = 'v' + browser.runtime.getManifest().version;
 load();

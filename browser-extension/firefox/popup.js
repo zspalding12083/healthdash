@@ -29,14 +29,17 @@ $('#auto').onchange = e => browser.storage.local.set({auto: e.target.checked});
 $('#pdfs').onchange = e => browser.storage.local.set({pdfs: e.target.checked});
 // The page you're on, looked up when the popup opens: Firefox only lets the plugin ask for a
 // site's permission as the very first thing a click does.
-let here = null;
+let here = null, tabId = null;
 browser.tabs.query({active: true, currentWindow: true}).then(([tab]) => {
+  tabId = tab ? tab.id : null;
   try{ const u = new URL(tab.url); if(/^https?:$/.test(u.protocol)) here = u; }catch(e){}
 });
+document.getElementById('ver').textContent = 'v' + browser.runtime.getManifest().version;
 
 $('#save').onclick = async () => {
+  let origin = null;
   if(here){
-    const origin = `${here.protocol}//${here.hostname}/*`;
+    origin = `${here.protocol}//${here.hostname}/*`;
     // asking is a no-op when the site is already allowed
     const ok = await browser.permissions.request({origins: [origin]});
     if(!ok){ $('#msg').textContent = 'Firefox needs your OK to read this site.'; return; }
@@ -46,7 +49,7 @@ $('#save').onclick = async () => {
     }
   }
   $('#msg').textContent = 'Saving…';
-  const r = await browser.runtime.sendMessage({cmd: 'save-tab'});
+  const r = await browser.runtime.sendMessage({cmd: 'save-tab', tabId, origin, host: here ? here.hostname : null});
   $('#msg').textContent = r && r.ok ? 'Sent.' : (r && r.error) || 'Could not save.';
 };
 for(const id of ['#opts', '#opts2']) $(id).onclick = e => { e.preventDefault(); browser.runtime.openOptionsPage(); window.close(); };
