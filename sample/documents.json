@@ -16,7 +16,7 @@
    "text": "Blood pressure 148/92 on two readings. Hemoglobin A1c 6.0 (prediabetes range). Start Examplol 10 mg daily. ECG normal sinus rhythm."},
   {"id": "doc-bill-2021", "path": "2021/Hospital bill.pdf", "title": "Hospital statement", "doc_date": "2021-05-20",
    "category": "financial", "facility": "Riverside General Hospital", "pages": 1, "ext": ".pdf",
-   "text": "Statement of account. Total charges 18,450.00. Insurance paid 16,200.00. Adjustments 1,750.00. Patient balance 500.00."},
+   "text": "Statement of account. Appendectomy admission 4/9/2021 to 4/11/2021. Total charges 18,450.00."},
   {"id": "doc-new-letter", "path": "inbox/letter.pdf", "title": "Letter", "doc_date": "2024-06",
    "category": "other", "pages": 1, "ext": ".pdf", "needs_review": true,
    "text": "New file dropped in the inbox; shows up under Needs review until someone confirms what it is."}

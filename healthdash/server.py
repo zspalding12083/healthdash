@@ -23,7 +23,7 @@ FILE_TYPES = {'.pdf': 'application/pdf', '.tif': 'image/tiff', '.tiff': 'image/t
               '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
 
 
-def make_handler(store, files_dir, import_from, title='Health Records'):
+def make_handler(store, files_dir, import_from, title='Health Records', uploads=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'healthdash'
 
@@ -123,6 +123,10 @@ def make_handler(store, files_dir, import_from, title='Health Records'):
                         return self._err(403, 'backups are only allowed from the ingest host')
                     return self._send(200, store.backup_bytes(), 'application/vnd.sqlite3',
                                       {'Content-Disposition': 'attachment; filename="health.db"'})
+                if p == ['uploads']:
+                    if not self._importer():
+                        return self._err(403, 'only the ingest host can list uploads')
+                    return self._send(200, uploads.uploaded() if uploads else [])
                 if p == ['files', 'missing']:
                     have = {f.split('.')[0] for f in os.listdir(files_dir)}
                     return self._send(200, [d['id'] for d in store.documents() if d['id'] not in have])
@@ -132,6 +136,11 @@ def make_handler(store, files_dir, import_from, title='Health Records'):
                     r = store.get(p[0], p[1])
                     return self._send(200, r) if r else self._err(404, 'not found')
             if method == 'POST':
+                if p == ['upload']:
+                    # from anyone on the LAN using the dashboard; the file is checked, then read
+                    if not uploads:
+                        return self._err(503, 'uploads are not enabled')
+                    return self._send(202, uploads.add(qs.get('name', ''), self._raw_body()))
                 if p == ['import']:
                     if not self._importer():
                         return self._err(403, 'import is only allowed from the ingest host')
@@ -216,7 +225,9 @@ def make_handler(store, files_dir, import_from, title='Health Records'):
 def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records'):
     os.makedirs(files_dir, exist_ok=True)
     store = Store(db_path)
-    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title))
+    from .uploads import Uploads
+    uploads = Uploads(store, files_dir)
+    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads))
     print(f'healthdash on http://{host}:{port}  db={db_path}  files={files_dir}', flush=True)
     try:
         httpd.serve_forever()

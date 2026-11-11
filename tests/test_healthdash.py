@@ -27,7 +27,7 @@ SAMPLE = {
         {'id': 'med-2', 'name': 'Fakeazole', 'dose': '20 mg', 'start_date': '2018-05-01',
          'end_date': '2020-03-05', 'status': 'stopped', 'notes': 'Switched'}],
     'financial': [{'id': 'fin-1', 'date': '2020-04-01', 'kind': 'Statement', 'payee': 'Sample Ortho',
-                   'charged': '$1,000.50', 'paid': 900, 'owed': 100.5}],
+                   'charged': '$1,000.50'}],
 }
 
 
@@ -62,10 +62,11 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.s.get('financial', 'fin-1')['charged'], 1000.5)
         summ = self.s.summary()
         self.assertEqual([m['name'] for m in summ['current_meds']], ['Examplol'])
-        self.assertEqual(summ['financial']['owed'], 100.5)
-        self.s.create('financial', {'kind': 'Quote (estimate)', 'charged': 5000, 'owed': 4000})
+        self.assertEqual(summ['financial']['charged'], 1000.5)
+        self.s.create('financial', {'kind': 'Quote (estimate)', 'charged': 5000, 'paid': 1})
         summ = self.s.summary()
-        self.assertEqual(summ['financial']['owed'], 100.5)  # estimates are not charges
+        self.assertEqual(summ['financial']['charged'], 1000.5)  # estimates are not charges
+        self.assertNotIn('paid', self.s.list('financial')[0])  # payment status is not kept
         self.assertEqual((summ['financial']['estimates'], summ['financial']['estimated']), (1, 5000))
 
     def test_search_documents_and_records(self):
@@ -111,6 +112,23 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(summ['counts']['documents'], 7)
         self.assertEqual([m['name'] for m in summ['current_meds']], ['Examplol'])
         self.assertTrue(self.s.search('appendicitis')['documents'])
+
+    def test_old_payment_columns_are_erased(self):
+        import sqlite3
+        self.s.close()
+        path = os.path.join(self.tmp.name, 'old.db')
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE financial (id TEXT PRIMARY KEY, date TEXT, kind TEXT, payee TEXT, account TEXT, "
+                   "description TEXT, charged REAL, paid REAL, adjusted REAL, owed REAL, notes TEXT, "
+                   "encounter_id TEXT, docs TEXT DEFAULT '[]', needs_review INTEGER DEFAULT 0, "
+                   "edited INTEGER DEFAULT 0, origin TEXT DEFAULT 'manual', updated TEXT)")
+        db.execute("INSERT INTO financial (id, charged, paid, owed) VALUES ('f', 10, 7, 3)")
+        db.commit()
+        db.close()
+        self.s = Store(path)
+        cols = {r[1] for r in self.s.db.execute('PRAGMA table_info(financial)')}
+        self.assertFalse(cols & {'paid', 'adjusted', 'owed'})
+        self.assertEqual(self.s.get('financial', 'f')['charged'], 10)
 
     def test_lab_series(self):
         self.load()

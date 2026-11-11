@@ -29,14 +29,16 @@ KINDS = {
     'allergies': ['substance', 'reaction', 'severity'],
     'imaging': ['date', 'modality', 'description', 'facility', 'location', 'notes'],
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
-    'financial': ['date', 'kind', 'payee', 'account', 'description', 'charged', 'paid', 'adjusted',
-                  'owed', 'notes', 'encounter_id'],
+    # what was billed or quoted, not whether it was paid (payment status is deliberately not kept)
+    'financial': ['date', 'kind', 'payee', 'account', 'description', 'charged', 'notes', 'encounter_id'],
 }
-NUMERIC = {'num', 'charged', 'paid', 'adjusted', 'owed'}
+NUMERIC = {'num', 'charged'}
+DROPPED = {'financial': ['paid', 'adjusted', 'owed']}  # removed columns, erased on open
 INTEGER = {'abnormal'}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
-              'size', 'ext', 'summary', 'organized_path']
+              'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
+ADDED = {'documents': ['status TEXT', 'review_note TEXT']}  # columns added after the first release
 # A financial row whose kind mentions an estimate or quote is not a charge: no work was billed.
 ESTIMATE_SQL = "(lower(coalesce(kind,'')) LIKE '%estimate%' OR lower(coalesce(kind,'')) LIKE '%quote%')"
 
@@ -64,7 +66,9 @@ def _schema():
         path TEXT, orig_path TEXT, title TEXT, doc_date TEXT, category TEXT, facility TEXT,
         pages INTEGER, ocr_pages TEXT, size INTEGER, ext TEXT, summary TEXT, organized_path TEXT,
         text TEXT, has_file INTEGER DEFAULT 0, needs_review INTEGER DEFAULT 1,
-        edited INTEGER DEFAULT 0, added TEXT, updated TEXT
+        edited INTEGER DEFAULT 0, added TEXT, updated TEXT,
+        status TEXT,                    -- 'processing' while an upload is being read, else done/error
+        review_note TEXT                -- questions for a person about this document
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
         title, facility, text, content='documents', content_rowid='rowid',
@@ -100,15 +104,78 @@ def _schema():
     return '\n'.join(sql)
 
 
+class _Result:
+    """A finished query: rows are fetched while the lock is held."""
+
+    def __init__(self, cur):
+        self.rows = cur.fetchall()
+        self.rowcount, self.lastrowid = cur.rowcount, cur.lastrowid
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return self.rows
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class _LockedDB:
+    """One sqlite connection shared by the web threads and the upload worker. Every call holds
+    the store's lock, so two threads never use the connection at the same time."""
+
+    def __init__(self, conn, lock):
+        object.__setattr__(self, '_conn', conn)
+        object.__setattr__(self, '_lock', lock)
+
+    def execute(self, sql, args=()):
+        with self._lock:
+            return _Result(self._conn.execute(sql, args))
+
+    def executescript(self, sql):
+        with self._lock:
+            self._conn.executescript(sql)
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+    def __getattr__(self, name):  # backup, close
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):  # row_factory
+        setattr(self._conn, name, value)
+
+
 class Store:
     def __init__(self, path):
         self.path = path
-        self.lock = threading.Lock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.lock = threading.RLock()
+        self.db = _LockedDB(sqlite3.connect(path, check_same_thread=False), self.lock)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript(_schema())
         self.db.commit()
+        self._drop_old_columns()
+
+    def _drop_old_columns(self):
+        for table, cols in ADDED.items():
+            have = {r[1] for r in self.db.execute(f'PRAGMA table_info({table})')}
+            for c in cols:
+                if c.split()[0] not in have:
+                    self.db.execute(f'ALTER TABLE {table} ADD COLUMN {c}')
+        self.db.commit()
+        dropped = False
+        for table, cols in DROPPED.items():
+            have = {r[1] for r in self.db.execute(f'PRAGMA table_info({table})')}
+            for c in cols:
+                if c in have:
+                    self.db.execute(f'ALTER TABLE {table} DROP COLUMN {c}')
+                    dropped = True
+        if dropped:
+            self.db.commit()
+            self.db.execute('VACUUM')  # so the old values are really gone from the file
 
     # ---- helpers ----------------------------------------------------------------------
 
@@ -263,7 +330,7 @@ class Store:
     def documents(self):
         rows = self._rows('SELECT id, path, orig_path, organized_path, title, doc_date, category, '
                           'facility, pages, ocr_pages, size, ext, summary, has_file, needs_review, '
-                          'edited, added FROM documents ORDER BY doc_date DESC, title')
+                          'edited, added, status, review_note FROM documents ORDER BY doc_date DESC, title')
         for r in rows:
             r['ocr_pages'] = json.loads(r['ocr_pages'] or '[]')
         return rows
@@ -278,7 +345,7 @@ class Store:
         return r
 
     def update_document(self, did, data):
-        allowed = {'title', 'doc_date', 'category', 'facility', 'summary', 'needs_review'}
+        allowed = {'title', 'doc_date', 'category', 'facility', 'summary', 'needs_review', 'review_note'}
         vals = {k: v for k, v in data.items() if k in allowed}
         if 'doc_date' in vals and vals['doc_date'] and not DATE_RE.match(vals['doc_date']):
             raise ValidationError('doc_date must look like YYYY-MM-DD')
@@ -292,6 +359,33 @@ class Store:
                                 [*vals.values(), did]).rowcount
             self.db.commit()
         return self.document(did) if n else None
+
+    def set_upload_result(self, did, **vals):
+        """Results of reading an uploaded file. Marked edited so a later ingest from the records
+        folder doesn't replace them with a guess from the file name."""
+        if 'ocr_pages' in vals:
+            vals['ocr_pages'] = json.dumps(vals['ocr_pages'])
+        if 'needs_review' in vals:
+            vals['needs_review'] = 1 if vals['needs_review'] else 0
+        vals.update(edited=1, updated=now())
+        with self.lock:
+            self.db.execute(f'UPDATE documents SET {", ".join(f"{k}=?" for k in vals)} WHERE id=?',
+                            [*vals.values(), did])
+            self.db.commit()
+
+    def known_facilities(self):
+        names = set()
+        for table, col in (('documents', 'facility'), ('encounters', 'facility'), ('tests', 'facility'),
+                           ('procedures', 'facility'), ('providers', 'facility'), ('imaging', 'facility'),
+                           ('financial', 'payee')):
+            names.update(r[0] for r in self.db.execute(f'SELECT DISTINCT {col} FROM {table}') if r[0])
+        return sorted(names)
+
+    def filed_for_learning(self):
+        """(facility, category, text) of documents a person has confirmed or that were catalogued."""
+        return [(r[0], r[1], r[2]) for r in self.db.execute(
+            "SELECT facility, category, text FROM documents WHERE needs_review=0 AND facility IS NOT NULL "
+            "AND coalesce(status, 'done')='done'")]
 
     def set_has_file(self, did, has=True):
         with self.lock:
@@ -367,7 +461,7 @@ class Store:
         if include_financial:
             for r in self.list('financial'):
                 add('financial', r['id'], r['date'], f"{r['kind'] or 'Bill'}: {r['payee'] or ''}",
-                    r['description'], r['payee'], {'owed': r['owed'], 'charged': r['charged']}, r['docs'])
+                    r['description'], r['payee'], {'charged': r['charged']}, r['docs'])
         ev.sort(key=lambda e: (e['date'], e['kind']), reverse=True)
         return ev
 
@@ -389,18 +483,17 @@ class Store:
                              "(end_date IS NULL AND status IS NULL)) ORDER BY name")
         last = self._rows('SELECT * FROM encounters ORDER BY date DESC LIMIT 1')
         span = self.db.execute("SELECT MIN(date), MAX(date) FROM encounters").fetchone()
-        fin = self.db.execute('SELECT SUM(charged), SUM(paid), SUM(owed) FROM financial '
-                              f'WHERE NOT {ESTIMATE_SQL}').fetchone()
+        fin = self.db.execute(f'SELECT COUNT(*), SUM(charged) FROM financial WHERE NOT {ESTIMATE_SQL}').fetchone()
         est = self.db.execute(f'SELECT COUNT(*), SUM(charged) FROM financial WHERE {ESTIMATE_SQL}').fetchone()
         return {'counts': c, 'needs_review': review,
                 'current_meds': [self._decode(r) for r in current],
                 'last_visit': self._decode(last[0]) if last else None,
                 'first_date': span[0], 'last_date': span[1],
-                'financial': {'charged': fin[0] or 0, 'paid': fin[1] or 0, 'owed': fin[2] or 0,
+                'financial': {'bills': fin[0] or 0, 'charged': fin[1] or 0,
                               'estimates': est[0] or 0, 'estimated': est[1] or 0}}
 
     def review_queue(self):
-        docs = self._rows('SELECT id, title, doc_date, category, path FROM documents '
+        docs = self._rows('SELECT id, title, doc_date, category, path, status, review_note FROM documents '
                           'WHERE needs_review=1 ORDER BY added DESC')
         recs = []
         for kind in KINDS:

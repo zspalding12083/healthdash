@@ -4,7 +4,8 @@
 #   deploy/sync.sh push      test locally, copy code to the server, restart, check it's up
 #   deploy/sync.sh ingest    read new files in the source folder (OCR on this machine), refresh the
 #                            organized copy, rebuild data/records.json, send everything to the server
-#   deploy/sync.sh backup    copy the server's database into backups/ (git-ignored)
+#   deploy/sync.sh backup    copy the server's database, and every file added from the dashboard,
+#                            into backups/ (git-ignored)
 #
 # Settings come from deploy/local.env (git-ignored; see local.env.example). Needs SSH keys for
 # the server login, /opt/healthdash/healthdash owned by it, /etc/sudoers.d/healthdash-restart.
@@ -41,6 +42,28 @@ backup() {
     python3 -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('select count(*) from documents')" "$out"
     ls -1t backups/health-*.db | tail -n +$((KEEP + 1)) | xargs -r rm --
     echo "backed up to $out ($(du -h "$out" | cut -f1))"
+    # files added from the dashboard only exist on the server until copied here
+    mkdir -p backups/uploads && chmod 700 backups/uploads
+    python3 - "$URL" <<'EOF'
+import json, os, re, sys, urllib.request
+url = sys.argv[1]
+docs = json.load(urllib.request.urlopen(url + '/api/uploads', timeout=60))
+new = 0
+for d in docs:
+    if not d.get('has_file'):
+        continue
+    name = re.sub(r'[^\w.\- ()&,]+', '_', d.get('orig_path') or 'upload')
+    out = os.path.join('backups/uploads', f"{d['id'][:12]}_{name}")
+    if os.path.exists(out):
+        continue
+    data = urllib.request.urlopen(f"{url}/file/{d['id']}?download=1", timeout=300).read()
+    with open(out + '.tmp', 'wb') as f:
+        f.write(data)
+    os.chmod(out + '.tmp', 0o600)
+    os.replace(out + '.tmp', out)
+    new += 1
+print(f'uploaded files: {len(docs)} on the dashboard, {new} newly copied to backups/uploads/')
+EOF
 }
 
 case "${1:-}" in

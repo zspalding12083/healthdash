@@ -21,8 +21,13 @@ scanned letters and imaging CDs. It runs on a Raspberry Pi–class box on the ho
   different labs normalized to one name.
 - **Documents**: every source file with date, kind and facility; opens the original. OCR'd text is
   searchable (SQLite FTS5).
-- **Needs review**: new files the catalog doesn't know yet, for someone to confirm.
-- **Financial**: bills, statements, quotes and reimbursements, apart from the health tabs.
+- **Add records**: drop PDFs or phone photos onto the page. Each one is read (OCR for scans),
+  sorted by kind, date and facility, its lab values and bill amount are pulled out, and it is
+  filed. Anything it isn't sure about is put to you as a question, with its best guess filled in.
+  It learns facilities from what's already filed. All of it runs on the server, nothing leaves it.
+- **Needs review**: uploads with open questions, new files the catalog doesn't know yet.
+- **Financial**: what was billed or quoted, by whom and for what, apart from the health tabs.
+  Quotes are kept apart from bills; whether anything was paid is deliberately not tracked.
 
 ## Privacy design
 
@@ -44,6 +49,8 @@ python3 -m unittest                   # tests (sample data only)
 ```
 
 ## Using it for real
+
+The server needs `poppler-utils` and `tesseract-ocr` for **Add records** to read files.
 
 On the machine that has the records (needs `poppler-utils`, `tesseract-ocr`, and LibreOffice for `.doc`):
 
@@ -72,6 +79,8 @@ healthdash/
   parsers.py    lab printout parsers (portal lists, Cerner-style result blocks) + analyte names
   organize.py   sorted, renamed hard-link copy of the source folder
   ingest.py     extract -> describe -> POST to the dashboard -> upload missing files
+  classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
+  uploads.py    files added on the dashboard: save, read in the background, file or ask
   store.py      SQLite schema, FTS search, timeline, lab series, edit tracking
   server.py     JSON API + static page
   static/index.html   the whole UI, no build step

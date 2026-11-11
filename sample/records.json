@@ -73,7 +73,7 @@
   ],
   "financial": [
     {"id": "fin-2021-er", "docs": ["doc-bill-2021"], "date": "2021-05-20", "kind": "Statement", "payee": "Riverside General Hospital",
-     "description": "Appendectomy admission", "charged": 18450.00, "paid": 16200.00, "adjusted": 1750.00, "owed": 500.00,
+     "description": "Appendectomy admission", "charged": 18450.00,
      "encounter_id": "enc-2021-04-09-admit"}
   ]
 }

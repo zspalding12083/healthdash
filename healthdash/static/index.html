@@ -110,6 +110,18 @@ form.edit .wide{grid-column:1/-1}
 .row-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .empty{padding:30px;text-align:center;color:var(--ink3)}
 .fin-note{font-size:13px;color:var(--ink3);margin:-4px 0 12px}
+.tray{position:fixed;right:16px;bottom:16px;width:min(380px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;z-index:50}
+.tray .item{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 4px 18px rgba(0,0,0,.15);font-size:14px}
+.tray .item .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tray .item .st{color:var(--ink2);font-size:13px;margin-top:3px}
+.tray .item.ask{border-color:var(--warn,#c80)}
+.tray .item.err{border-color:var(--bad)}
+.tray .item .acts{display:flex;gap:8px;margin-top:6px}
+.drop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:60;color:#fff;font-size:22px;font-weight:600}
+.drop.on{display:flex}
+.drop div{border:3px dashed #fff;border-radius:18px;padding:40px 60px;text-align:center}
+.ask-box{background:var(--bg);border-left:4px solid var(--warn,#c80);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:14px}
+.ask-box ul{margin:6px 0 0 18px;padding:0}
 @media (max-width:760px){
   .docview{grid-template-columns:1fr}
   .medrow,.axis{grid-template-columns:110px 1fr}
@@ -123,12 +135,16 @@ form.edit .wide{grid-column:1/-1}
   <div class="bar">
     <div class="brand">__TITLE__<small id="span"></small></div>
     <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
+    <button class="btn primary" id="upl" title="Add PDFs or photos of records">＋ Add records</button>
+    <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,application/pdf,image/*" hidden>
     <button class="btn" id="theme" title="Light / dark">◐</button>
   </div>
   <nav id="tabs"></nav>
 </header>
 <main id="main"><div class="empty">Loading…</div></main>
 
+<div class="tray" id="tray" aria-live="polite"></div>
+<div class="drop" id="drop"><div>Drop PDFs or photos to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
 <dialog id="dlg"><div class="dlg-h"><div id="dlg-title"></div><button class="btn" id="dlg-close">Close</button></div><div class="dlg-b" id="dlg-body"></div></dialog>
 
 <script>
@@ -150,7 +166,7 @@ const FIELDS = {
   allergies:['substance','reaction','severity'],
   imaging:['date','modality','description','facility','location','notes'],
   providers:['name','specialty','facility','phone','notes'],
-  financial:['date','kind','payee','account','description','charged','paid','adjusted','owed','notes','encounter_id'],
+  financial:['date','kind','payee','account','description','charged','notes','encounter_id'],
 };
 const LONG = new Set(['summary','result','notes','description','reason']);
 const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging']), year:'', fac:''}};
@@ -307,7 +323,7 @@ function recordTable(kind, rows, cols, title, opts={}){
     html += `<tr class="click" data-open="${kind}|${esc(r.id)}">` + cols.map(([f,,cls]) => {
       let v = r[f];
       if(f.endsWith('date') || f==='date' || f==='first_noted') return `<td class="nowrap ${cls||''}" data-v="${esc(v||'')}">${fdate(v)}</td>`;
-      if(['charged','paid','adjusted','owed'].includes(f)) return `<td class="num ${cls||''}" data-v="${v??''}">${money(v)}</td>`;
+      if(f==='charged') return `<td class="num ${cls||''}" data-v="${v??''}">${money(v)}</td>`;
       if(f==='abnormal') return `<td class="${cls||''}">${v?'<span class="tag bad">abnormal</span>':''}</td>`;
       if(f==='status') return `<td class="${cls||''}"><span class="tag ${v==='active'?'warn':v==='resolved'?'ok':''}">${esc(v||'')}</span></td>`;
       return `<td class="${cls||''}">${f===cols[0][0]||f==='name'||f==='reason'?`<b>${esc(v)}</b>`:esc(v)}</td>`;
@@ -371,7 +387,7 @@ VIEWS.documents = async () => {
   let html = `<div class="panel"><h2>All documents (${docs.length})</h2><div class="filters"><select class="f" id="f-cat"><option value="">All kinds</option>${cats.map(c=>`<option ${S.docCat===c?'selected':''}>${esc(c)}</option>`).join('')}</select><span class="muted small">Click a row to read it. Scanned pages were turned into text so they're searchable too.</span></div>
     <div class="tablewrap"><table><thead><tr><th data-sort>Date</th><th data-sort>Document</th><th data-sort>Kind</th><th data-sort class="hide-sm">From</th><th data-sort class="hide-sm">Pages</th><th></th></tr></thead><tbody>`;
   for(const d of docs.filter(d => !S.docCat || (d.category||'other')===S.docCat)){
-    html += `<tr class="click" data-doc="${d.id}"><td class="nowrap" data-v="${esc(d.doc_date||'')}">${fdate(d.doc_date)}</td><td><b>${esc(d.title)}</b><div class="small muted">${esc(d.organized_path||d.path)}</div></td><td>${esc(d.category||'')}</td><td class="hide-sm">${esc(d.facility||'')}</td><td class="hide-sm num">${d.pages??''}</td><td class="nowrap">${d.ocr_pages.length?'<span class="tag" title="text read from a scan">scan</span>':''}${d.needs_review?'<span class="tag warn">review</span>':''}</td></tr>`;
+    html += `<tr class="click" data-doc="${d.id}"><td class="nowrap" data-v="${esc(d.doc_date||'')}">${fdate(d.doc_date)}</td><td><b>${esc(d.title)}</b><div class="small muted">${esc(d.organized_path||d.path)}</div></td><td>${esc(d.category||'')}</td><td class="hide-sm">${esc(d.facility||'')}</td><td class="hide-sm num">${d.pages??''}</td><td class="nowrap">${d.ocr_pages.length?'<span class="tag" title="text read from a scan">scan</span>':''}${d.status==='processing'?'<span class="tag">reading…</span>':''}${d.needs_review&&d.status!=='processing'?'<span class="tag warn">review</span>':''}</td></tr>`;
   }
   html += '</tbody></table></div></div>';
   setTimeout(() => { const s = $('#f-cat'); if(s) s.onchange = e => { S.docCat = e.target.value; render(); }; });
@@ -382,7 +398,7 @@ VIEWS.review = async () => {
   const r = await api('/api/review');
   let html = `<div class="panel"><h2>Needs review</h2><p class="muted small" style="margin-top:-6px">New files that haven't been catalogued yet, and entries that were read from hard-to-read scans. Open one, check it against the document, and save to clear the flag.</p>`;
   if(!r.documents.length && !r.records.length) return html + '<div class="empty">All caught up.</div></div>';
-  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span></div>`).join('');
+  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span>${d.status==='processing'?' <span class="tag">reading…</span>':''}${d.review_note?`<div class="small" style="margin-top:3px">${esc(d.review_note.split('\n')[0])}${d.review_note.includes('\n')?' <span class="muted">(+ more)</span>':''}</div>`:''}</div>`).join('');
   if(r.records.length) html += '<h3>Entries</h3>' + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.id)}</b> <span class="muted small">${fdate(x.date||x.start_date||'')}</span></div>`).join('');
   return html + '</div>';
 };
@@ -393,12 +409,12 @@ VIEWS.financial = async (sum) => {
   const isEst = r => /estimate|quote/i.test(r.kind||'');
   const bills = fin.filter(r => !isEst(r)), ests = fin.filter(isEst);
   const byPayee = {};
-  for(const r of bills){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,paid:0,owed:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].paid += r.paid||0; byPayee[k].owed += r.owed||0; byPayee[k].n++; }
-  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total charged</span></div><div class="tile"><b>${money(f.paid)}</b><span>paid / adjusted by insurance & others</span></div><div class="tile"><b>${money(f.owed)}</b><span>patient balance shown on statements</span></div><div class="tile"><b>${bills.length}</b><span>bills & statements</span></div></div>`;
-  html += `<div class="panel"><h2>By provider</h2><div class="tablewrap"><table><thead><tr><th data-sort>Payee</th><th data-sort>Items</th><th data-sort>Charged</th><th data-sort>Paid / adjusted</th><th data-sort>Balance shown</th></tr></thead><tbody>` +
-    Object.entries(byPayee).sort((a,b)=>b[1].charged-a[1].charged).map(([k,v]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${v.n}</td><td class="num" data-v="${v.charged}">${money(v.charged)}</td><td class="num" data-v="${v.paid}">${money(v.paid)}</td><td class="num" data-v="${v.owed}">${money(v.owed)}</td></tr>`).join('') + '</tbody></table></div></div>';
-  html += recordTable('financial', bills, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Charged'],['paid','Paid / adj.'],['owed','Balance']], 'Bills and statements', {note:'Each line opens the full record and the original statement.'});
-  if(ests.length) html += recordTable('financial', ests, [['date','Date'],['kind','Kind'],['payee','Payee'],['description','What was proposed'],['charged','Quoted'],['paid','Est. insurance'],['owed','Est. patient share']], 'Estimates and quotes', {note:'Proposed treatment and its price. Nothing here was billed, and none of it counts in the totals above.'});
+  for(const r of bills){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].n++; }
+  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total billed</span></div><div class="tile"><b>${bills.length}</b><span>bills & statements</span></div><div class="tile"><b>${ests.length}</b><span>estimates (not billed)</span></div></div>`;
+  html += `<div class="panel"><h2>By provider</h2><div class="tablewrap"><table><thead><tr><th data-sort>Payee</th><th data-sort>Items</th><th data-sort>Billed</th></tr></thead><tbody>` +
+    Object.entries(byPayee).sort((a,b)=>b[1].charged-a[1].charged).map(([k,v]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${v.n}</td><td class="num" data-v="${v.charged}">${money(v.charged)}</td></tr>`).join('') + '</tbody></table></div></div>';
+  html += recordTable('financial', bills, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Billed']], 'Bills and statements', {note:'What was billed, from whom, and for what. Whether it was paid is not tracked. Each line opens the original.'});
+  if(ests.length) html += recordTable('financial', ests, [['date','Date'],['kind','Kind'],['payee','Payee'],['description','What was proposed'],['charged','Quoted']], 'Estimates and quotes', {note:'Proposed treatment and its price. Nothing here was billed, and none of it counts in the total above.'});
   return html;
 };
 
@@ -427,7 +443,7 @@ async function openRecord(kind, id){
   const kv = FIELDS[kind].filter(f => r[f] != null && r[f] !== '').map(f => {
     let v = r[f];
     if(f.includes('date') || f==='first_noted') v = fdate(v);
-    else if(['charged','paid','adjusted','owed'].includes(f)) v = money(v);
+    else if(f==='charged') v = money(v);
     else if(f==='abnormal') v = v ? 'Yes' : 'No';
     else if(f==='encounter_id') return `<div>Visit</div><div><a href="#" data-open="encounters|${esc(v)}">open the visit</a></div>`;
     return `<div>${f.replace(/_/g,' ')}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
@@ -442,7 +458,7 @@ function editRecord(kind, r){
   const isNew = !r; r = r || {};
   const inputs = FIELDS[kind].map(f => {
     const v = r[f] ?? '';
-    const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','paid','adjusted','owed','num'].includes(f) ? 'number" step="any' : 'text';
+    const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','num'].includes(f) ? 'number" step="any' : 'text';
     if(f==='abnormal') return `<label>Abnormal<select name="${f}"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes</option></select></label>`;
     if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
     if(LONG.has(f)) return `<label class="wide">${f.replace(/_/g,' ')}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
@@ -475,16 +491,80 @@ async function openDoc(id){
       <div>${d.summary?`<p>${esc(d.summary)}</p>`:''}<div class="kv"><div>File</div><div class="small">${esc(d.organized_path||d.path)}</div><div>Original</div><div class="small">${esc(d.orig_path||'')}</div><div>Pages</div><div>${d.pages??''}</div></div>
       ${d.has_file?`<p><a class="btn" href="/file/${d.id}?download=1">Download</a> <a class="btn" href="/file/${d.id}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
       <h3>Entries from this document</h3>${linked||'<p class="muted small">None.</p>'}
-      <h3>Details</h3><form class="edit" id="df" style="grid-template-columns:1fr">
+      <h3>Details</h3>${d.status==='processing'?'<div class="ask-box">Still reading this file. This can take a minute for scans.</div>':''}
+      ${d.needs_review&&d.review_note?`<div class="ask-box"><b>Please check:</b><ul>${d.review_note.split('\n').map(q=>`<li>${esc(q)}</li>`).join('')}</ul><div class="small muted" style="margin-top:6px">Fix anything below that's wrong, then save.</div></div>`:''}
+      <form class="edit" id="df" style="grid-template-columns:1fr">
         <label>Title<input name="title" value="${esc(d.title||'')}"></label><label>Date<input name="doc_date" value="${esc(d.doc_date||'')}" placeholder="YYYY-MM-DD"></label>
         <label>Kind<select name="category">${['hospital','office','imaging','labs','procedures','tests','eye','dental','medications','financial','legal','other'].map(c=>`<option ${c===d.category?'selected':''}>${c}</option>`).join('')}</select></label>
         <label>From<input name="facility" value="${esc(d.facility||'')}"></label>
         <label>Summary<textarea name="summary" rows="3">${esc(d.summary||'')}</textarea></label></form>
       <div class="row-actions"><button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
   $('#dsave').onclick = async () => {
-    const fd = new FormData($('#df')); const body = Object.fromEntries(fd.entries()); body.needs_review = 0;
+    const fd = new FormData($('#df')); const body = Object.fromEntries(fd.entries()); body.needs_review = 0; body.review_note = null;
     try{ await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify(body)}); invalidate(); $('#dmsg').textContent = 'Saved.'; render(); }catch(e){ $('#dmsg').textContent = e.message; }
   };
+}
+
+// ---------- adding records ----------
+$('#upl').onclick = () => $('#uplf').click();
+$('#uplf').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
+let dragN = 0;
+addEventListener('dragenter', e => { if([...(e.dataTransfer?.types||[])].includes('Files')){ dragN++; $('#drop').classList.add('on'); } });
+addEventListener('dragleave', () => { if(--dragN <= 0){ dragN = 0; $('#drop').classList.remove('on'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); dragN = 0; $('#drop').classList.remove('on'); if(e.dataTransfer?.files?.length) uploadFiles([...e.dataTransfer.files]); });
+
+function trayItem(name){
+  const el = document.createElement('div'); el.className = 'item';
+  el.innerHTML = `<div class="nm"></div><div class="st">Uploading…</div><div class="acts"></div>`;
+  el.querySelector('.nm').textContent = name;
+  $('#tray').prepend(el);
+  return {
+    status(t, cls){ el.querySelector('.st').innerHTML = t; el.className = 'item ' + (cls||''); },
+    actions(html){ el.querySelector('.acts').innerHTML = html; bind(el);
+      el.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = () => el.remove()); },
+    remove(){ el.remove(); },
+  };
+}
+async function uploadFiles(files){
+  for(const f of files){
+    const t = trayItem(f.name);
+    try{
+      const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method:'POST', body:f});
+      const j = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error(j.error || r.statusText);
+      if(j.duplicate){
+        t.status(`Already in the records as <b>${esc(j.title)}</b>.`);
+        t.actions(`<button class="btn" data-doc="${j.id}">Open</button><button class="btn" data-dismiss>OK</button>`);
+        continue;
+      }
+      t.status('Reading and sorting…');
+      watchUpload(j.id, t);
+    }catch(e){ t.status(esc(e.message), 'err'); t.actions('<button class="btn" data-dismiss>OK</button>'); }
+  }
+}
+async function watchUpload(id, t){
+  for(let i = 0; i < 900; i++){
+    await new Promise(r => setTimeout(r, i < 10 ? 1500 : 4000));
+    let d; try{ d = await api('/api/documents/' + id); }catch(e){ continue; }
+    if(d.status === 'processing') continue;
+    invalidate(); render();
+    const what = [d.title, fdate(d.doc_date), d.facility].filter(Boolean).map(esc).join(' · ');
+    const extra = d.linked.length ? ` <span class="muted">(${d.linked.length} entr${d.linked.length===1?'y':'ies'} added)</span>` : '';
+    if(d.status === 'error'){
+      t.status(esc(d.review_note || "Couldn't read this file."), 'err');
+      t.actions(`<button class="btn" data-doc="${id}">Open</button><button class="btn" data-dismiss>OK</button>`);
+    }else if(d.needs_review){
+      const n = (d.review_note||'').split('\n').filter(Boolean).length;
+      t.status(`<b>Needs your help</b> with ${n} question${n===1?'':'s'}. Best guess: ${what}`, 'ask');
+      t.actions(`<button class="btn primary" data-doc="${id}">Answer</button><button class="btn" data-dismiss>Later</button>`);
+    }else{
+      t.status(`Filed: ${what}${extra}`);
+      t.actions(`<button class="btn" data-doc="${id}">Open</button><button class="btn" data-dismiss>OK</button>`);
+    }
+    return;
+  }
+  t.status('Still reading. Check Needs review later.');
 }
 
 const start = location.hash.slice(1);
