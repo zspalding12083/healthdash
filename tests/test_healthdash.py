@@ -63,6 +63,10 @@ class StoreTests(unittest.TestCase):
         summ = self.s.summary()
         self.assertEqual([m['name'] for m in summ['current_meds']], ['Examplol'])
         self.assertEqual(summ['financial']['owed'], 100.5)
+        self.s.create('financial', {'kind': 'Quote (estimate)', 'charged': 5000, 'owed': 4000})
+        summ = self.s.summary()
+        self.assertEqual(summ['financial']['owed'], 100.5)  # estimates are not charges
+        self.assertEqual((summ['financial']['estimates'], summ['financial']['estimated']), (1, 5000))
 
     def test_search_documents_and_records(self):
         self.load()

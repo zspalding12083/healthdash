@@ -37,6 +37,15 @@ INTEGER = {'abnormal'}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path']
+# A financial row whose kind mentions an estimate or quote is not a charge: no work was billed.
+ESTIMATE_SQL = "(lower(coalesce(kind,'')) LIKE '%estimate%' OR lower(coalesce(kind,'')) LIKE '%quote%')"
+
+
+def is_estimate(kind):
+    k = (kind or '').lower()
+    return 'estimate' in k or 'quote' in k
+
+
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
 
 
@@ -380,12 +389,15 @@ class Store:
                              "(end_date IS NULL AND status IS NULL)) ORDER BY name")
         last = self._rows('SELECT * FROM encounters ORDER BY date DESC LIMIT 1')
         span = self.db.execute("SELECT MIN(date), MAX(date) FROM encounters").fetchone()
-        fin = self.db.execute('SELECT SUM(charged), SUM(paid), SUM(owed) FROM financial').fetchone()
+        fin = self.db.execute('SELECT SUM(charged), SUM(paid), SUM(owed) FROM financial '
+                              f'WHERE NOT {ESTIMATE_SQL}').fetchone()
+        est = self.db.execute(f'SELECT COUNT(*), SUM(charged) FROM financial WHERE {ESTIMATE_SQL}').fetchone()
         return {'counts': c, 'needs_review': review,
                 'current_meds': [self._decode(r) for r in current],
                 'last_visit': self._decode(last[0]) if last else None,
                 'first_date': span[0], 'last_date': span[1],
-                'financial': {'charged': fin[0] or 0, 'paid': fin[1] or 0, 'owed': fin[2] or 0}}
+                'financial': {'charged': fin[0] or 0, 'paid': fin[1] or 0, 'owed': fin[2] or 0,
+                              'estimates': est[0] or 0, 'estimated': est[1] or 0}}
 
     def review_queue(self):
         docs = self._rows('SELECT id, title, doc_date, category, path FROM documents '

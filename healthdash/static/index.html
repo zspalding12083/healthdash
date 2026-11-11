@@ -390,12 +390,15 @@ VIEWS.review = async () => {
 VIEWS.financial = async (sum) => {
   const fin = await load('financial','/api/financial');
   const f = sum.financial;
+  const isEst = r => /estimate|quote/i.test(r.kind||'');
+  const bills = fin.filter(r => !isEst(r)), ests = fin.filter(isEst);
   const byPayee = {};
-  for(const r of fin){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,paid:0,owed:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].paid += r.paid||0; byPayee[k].owed += r.owed||0; byPayee[k].n++; }
-  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total charged</span></div><div class="tile"><b>${money(f.paid)}</b><span>paid / adjusted by insurance & others</span></div><div class="tile"><b>${money(f.owed)}</b><span>patient balance shown on statements</span></div><div class="tile"><b>${fin.length}</b><span>bills, quotes & statements</span></div></div>`;
+  for(const r of bills){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,paid:0,owed:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].paid += r.paid||0; byPayee[k].owed += r.owed||0; byPayee[k].n++; }
+  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total charged</span></div><div class="tile"><b>${money(f.paid)}</b><span>paid / adjusted by insurance & others</span></div><div class="tile"><b>${money(f.owed)}</b><span>patient balance shown on statements</span></div><div class="tile"><b>${bills.length}</b><span>bills & statements</span></div></div>`;
   html += `<div class="panel"><h2>By provider</h2><div class="tablewrap"><table><thead><tr><th data-sort>Payee</th><th data-sort>Items</th><th data-sort>Charged</th><th data-sort>Paid / adjusted</th><th data-sort>Balance shown</th></tr></thead><tbody>` +
     Object.entries(byPayee).sort((a,b)=>b[1].charged-a[1].charged).map(([k,v]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${v.n}</td><td class="num" data-v="${v.charged}">${money(v.charged)}</td><td class="num" data-v="${v.paid}">${money(v.paid)}</td><td class="num" data-v="${v.owed}">${money(v.owed)}</td></tr>`).join('') + '</tbody></table></div></div>';
-  html += recordTable('financial', fin, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Charged'],['paid','Paid / adj.'],['owed','Balance']], 'Every bill, quote and statement', {note:'Each line opens the full record and the original statement. Quotes are estimates, not charges.'});
+  html += recordTable('financial', bills, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Charged'],['paid','Paid / adj.'],['owed','Balance']], 'Bills and statements', {note:'Each line opens the full record and the original statement.'});
+  if(ests.length) html += recordTable('financial', ests, [['date','Date'],['kind','Kind'],['payee','Payee'],['description','What was proposed'],['charged','Quoted'],['paid','Est. insurance'],['owed','Est. patient share']], 'Estimates and quotes', {note:'Proposed treatment and its price. Nothing here was billed, and none of it counts in the totals above.'});
   return html;
 };
 
