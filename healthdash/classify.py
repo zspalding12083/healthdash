@@ -10,6 +10,9 @@ from datetime import date
 
 from . import catalog, parsers
 
+# bump when the sorting rules change: uploads nobody has answered yet are sorted again
+VERSION = '2026-11-11.6'
+
 CATEGORIES = ['hospital', 'office', 'imaging', 'labs', 'procedures', 'tests', 'eye', 'dental',
               'medications', 'financial', 'legal', 'other']
 LABELS = {'hospital': 'hospital / ER record', 'office': 'office visit note', 'imaging': 'imaging report',
@@ -59,7 +62,7 @@ KEYWORDS = {
 
 # phrases a document uses to name itself, in its file name or its first lines
 NAMES = [
-    ('hospital', r'discharge summary|discharge instructions|emergency (department|room)|\bed (note|visit)|'
+    ('hospital', r'continuity of care document|discharge summary|discharge instructions|emergency (department|room)|\bed (note|visit)|'
                  r'admission (note|h&p)|history and physical|h&p|hospital course|er report|ed provider note'),
     ('office', r'office[- ]?(clinic )?(visit|note)|clinic note|progress note|consult(ation)? note|visit (summary|note)|'
                r'after visit summary|past visit details|follow[- ]?up visit'),
@@ -67,7 +70,7 @@ NAMES = [
     ('imaging', r'\b(mri|mra|cta|ct|x-?ray|xr|ultrasound|us|mammogra\w*|pet|dexa|fluoro\w*)\b.{0,30}\b(report|scan|head|brain|chest|spine|'
                 r'lumbar|cervical|thoracic|abdomen|pelvis|knee|hip|shoulder|neck|breast)\b|radiology report|imaging report'),
     ('tests', r'echocardiogram|\bekg\b|\becg\b|\beeg\b|sleep study|stress test|holter|pulmonary function|\bemg\b'),
-    ('eye', r'\beyes?\b|\boct\b|optic nerve|retina|visual field|humphrey|eye exam|ophthalm\w*|optometr\w*|glasses|contact lens'),
+    ('eye', r'\beyes?\b|\boct\b|\bo\.?d\.?$|optometr|optic nerve|retina|visual field|humphrey|eye exam|ophthalm\w*|optometr\w*|glasses|contact lens'),
     ('dental', r'dental|dentist|denture|oral surgery|orthodont\w*'),
     ('labs', r'lab(oratory)? results?|lab report|\blabs\b|blood work|pathology report'),
     ('medications', r'medication list|med(ication)? schedule|prescription(?! glasses)|\brx\b'),
@@ -80,10 +83,10 @@ NAMES = [
 def named_category(filename, text):
     """(category, where) from the file name, else from the first few lines; None if neither says."""
     base = re.sub(r'[_]+', ' ', os.path.splitext(os.path.basename(filename or ''))[0]).lower()
-    head = '\n'.join([ln for ln in (text or '').splitlines() if ln.strip()][:8]).lower()
+    head = '\n'.join(ln.strip() for ln in [ln for ln in (text or '').splitlines() if ln.strip()][:8]).lower()
     for where, src in (('name', base), ('heading', head)):
         for cat, rx in NAMES:
-            if re.search(rx, src):
+            if re.search(rx, src, re.M):
                 return cat, where
     return None, None
 
@@ -240,12 +243,21 @@ def guess_category(text, labs=0, filename=''):
     """(category, sure, scores)"""
     s = score_categories(text)
     named, where = named_category(filename, text)
+    short = len(text) < 25000
+    narrative = s['hospital'] + s['office'] + s['procedures']
+    lab_report = parsers._LC_HEADER.search(text) or (
+        narrative == 0 and re.search(r'specimen', text, re.I) and re.search(r'collected', text, re.I))
+    if where != 'name' and short and (lab_report or (labs >= 1 and narrative == 0 and re.search(
+            r'patient report|lab(oratory)? results?', text, re.I))):
+        return 'labs', True, s
     if named == 'financial' and s['dental'] >= 2:
         named = 'dental'
     if named:
         # trust what it calls itself; a heading needs some support from the text
         return named, where == 'name' or s.get(named, 0) >= 2 or (named == 'labs' and labs >= 3), s
     narrative = s['hospital'] + s['office'] + s['procedures']
+    if labs >= 1 and narrative == 0 and re.search(r'patient report|lab(oratory)? (report|results?)|specimen', text, re.I):
+        return 'labs', True, s
     if labs >= 3 and narrative == 0:
         return 'labs', True, s
     if labs >= 3:
@@ -263,12 +275,36 @@ def guess_category(text, labs=0, filename=''):
     return top, sure, s
 
 
+# big reference labs name themselves on every report
+LAB_VENDORS = [('LabCorp', r'labcorp|laboratory corporation of america'), ('Quest Diagnostics', r'quest diagnostics')]
+PLACE_WORDS = re.compile(r'\b(hospital|medical|center|centre|health|clinic|dental|dentist|lab|labs|laboratory|'
+                         r'radiology|imaging|associates|group|practice|pc|p\.c\.|llc|od|md|do|dds|dmd|physicians|'
+                         r'care|ortho\w*|rheumat\w*|cardio\w*|neuro\w*|vision|eye|ambulance|pharmacy|institute|'
+                         r'surgery|surgical|urgent|emergency|family|pediatric\w*|ob/?gyn|women)\b', re.I)
+
+
+def looks_like_place(name):
+    """A facility name, not a bare street address, town or insurance plan."""
+    base = re.sub(r'\s*\(.*?\)', '', name or '').strip()
+    if not base or base[0].isdigit() or re.search(r'\b(insurance|plan|insurer)\b', name, re.I):
+        return False
+    return bool(PLACE_WORDS.search(base) or any(_distinctive(w) for w in base.split()))
+
+
+def _count(word, low):
+    return len(re.findall(r'\b' + re.escape(word.lower()) + r'\b', low))
+
+
 def guess_facility(text, known):
     """Match against facilities already in the records. (name or None, sure)"""
     low = text.lower()
+    top = '\n'.join(low.splitlines()[:25])
+    for name, rx in LAB_VENDORS:
+        if re.search(rx, top) or (len(low) < 25000 and re.search(rx, low)):
+            return name, True
     hits = []
     for name in known:
-        if not name:
+        if not name or not looks_like_place(name):
             continue
         base = re.sub(r'\s*\(.*?\)', '', name).strip()
         score = 0
@@ -284,10 +320,20 @@ def guess_facility(text, known):
             if words and score < min(2, len(words)):
                 score = 0
         if score:
-            hits.append((score, len(name), name))
+            # then by how often it is mentioned: a hospital named on every page beats one named once
+            words = [w for w in re.findall(r"[A-Za-z][A-Za-z'&-]{2,}", base) if w.lower() not in _COMMON] or [base]
+            mentions = max(_count(w, low) for w in words)
+            hits.append((score, min(mentions, 50), len(name), name))
     if not hits:
         return None, False
     hits.sort(reverse=True)
+    # two different places both named a lot (a hospital and its parent network, a workplace and
+    # the hospital): don't be sure unless one is named at least twice as often
+    close_call = len(hits) > 1 and hits[1][0] == hits[0][0] and hits[1][1] * 2 > hits[0][1] and \
+        re.sub(r'\s*\(.*?\)', '', hits[1][3]).lower() not in hits[0][3].lower()
+    hits = [(h[0] * 100 + h[1], h[2], h[3]) for h in hits]
+    if close_call:
+        return hits[0][2], False
     best = [h for h in hits if h[0] == hits[0][0]]
     if len(best) > 1 and len({h[2].lower() for h in best}) > 1:
         # several names tie: if one contains the others it is the same place
@@ -365,7 +411,7 @@ class Filed:
     """What we can learn from documents that are already filed: [(facility, category, text)]."""
 
     def __init__(self, docs):
-        self.docs = [(f, c, _lines(t or '')) for f, c, t in docs]
+        self.docs = [(f if f and looks_like_place(f) else None, c, _lines(t or '')) for f, c, t in docs]
         df = {}
         for _, _, ls in self.docs:
             for ln in ls:
@@ -425,7 +471,8 @@ def near_duplicate(text, others):
 
 
 def lab_rows(text, facility=None):
-    rows = parsers.portal_list_labs(text, facility) + parsers.cerner_block_labs(text, facility)
+    rows = (parsers.portal_list_labs(text, facility) + parsers.cerner_block_labs(text, facility)
+            + parsers.labcorp_labs(text, facility))
     return parsers.normalize(rows)
 
 

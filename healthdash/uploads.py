@@ -53,6 +53,8 @@ class Uploads:
         for d in store.documents():  # finish anything interrupted by a restart
             if d.get('status') == 'processing':
                 self.q.put(d['id'])
+        for sha in store.stale_uploads(classify.VERSION):  # sorting rules improved: sort again
+            self.q.put(('resort', sha))
         if recheck and not extractor:
             threading.Thread(target=self._recheck, args=(recheck,), daemon=True, name='uploads-recheck').start()
 
@@ -99,22 +101,29 @@ class Uploads:
 
     def _work(self):
         while True:
-            sha = self.q.get()
+            item = self.q.get()
+            resort = isinstance(item, tuple)
+            sha = item[1] if resort else item
             try:
-                self.process(sha)
+                self.process(sha, reuse_text=resort)
             except Exception as e:  # noqa: BLE001 - keep the worker alive, tell the person
                 if not isinstance(e, RuntimeError):  # RuntimeError: an expected, explained failure
                     traceback.print_exc()
                 self.store.set_upload_result(sha, status='error', needs_review=True,
                                              review_note=f"Couldn't read this file: {e}")
 
-    def process(self, sha):
+    def process(self, sha, reuse_text=False):
         d = self.store.document(sha)
         if not d:
             return
-        path = os.path.join(self.files_dir, sha + (d.get('ext') or ''))
-        ex = self.extract(path)
-        text = '\f'.join(ex['pages'])
+        if reuse_text and d.get('text'):
+            text = d['text']
+            ex = {'pages': text.split('\f'), 'ocr_pages': d.get('ocr_pages') or []}
+        else:
+            path = os.path.join(self.files_dir, sha + (d.get('ext') or ''))
+            ex = self.extract(path)
+            text = '\f'.join(ex['pages'])
+        self.store.clear_upload_entries(sha)
         r = classify.classify(text, d.get('orig_path') or '', self.store.known_facilities(),
                               classify.Filed(self.store.filed_for_learning()))
         dup = classify.near_duplicate(text, self.store.texts_except(sha))
@@ -130,7 +139,7 @@ class Uploads:
             sha, text=text, pages=len(ex['pages']), ocr_pages=ex.get('ocr_pages', []),
             title=r['title'], doc_date=r['doc_date'], category=r['category'], facility=r['facility'],
             status='done', needs_review=bool(questions), review_note='\n'.join(questions) or None,
-            duplicate_of=dup['id'] if dup else None)
+            duplicate_of=dup['id'] if dup else None, classified=classify.VERSION)
         if dup and dup['how'] == 'copy':
             return r  # nothing new to add from a copy
         new_labs = [row for row in r['labs'] if not self.store.lab_exists(row)]

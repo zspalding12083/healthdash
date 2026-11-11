@@ -152,15 +152,136 @@ SYNONYMS = {
 }
 
 
+SYNONYMS.update({
+    'lymphs': 'Lymphocytes %', 'eos': 'Eosinophils %', 'basos': 'Basophils %', 'neutrophils': 'Neutrophils %',
+    'monocytes': 'Monocytes %', 'neutrophils (absolute)': 'Neutrophils, absolute',
+    'lymphs (absolute)': 'Lymphocytes, absolute', 'monocytes(absolute)': 'Monocytes, absolute',
+    'monocytes (absolute)': 'Monocytes, absolute', 'eos (absolute)': 'Eosinophils, absolute',
+    'baso (absolute)': 'Basophils, absolute', 'immature granulocytes': 'Immature granulocytes %',
+    'immature grans (abs)': 'Immature granulocytes, absolute', 'carbon dioxide, total': 'CO2 (bicarbonate)',
+    'protein, total': 'Total protein', 'bilirubin, total': 'Bilirubin, total', 'ast (sgot)': 'AST',
+    'alt (sgpt)': 'ALT', 'alkaline phosphatase, s': 'Alkaline phosphatase', 'globulin, total': 'Globulin',
+    'bun/creatinine ratio': 'BUN/Creat Ratio', 'egfr if nonafricn am': 'eGFR', 'hemoglobin a1c': 'Hemoglobin A1c',
+    't4,free(direct)': 'Free T4', 'triiodothyronine,free': 'Free T3', 'c-reactive protein, quant': 'CRP',
+    'thyroid peroxidase (tpo) ab': 'TPO antibodies', 'immunoglobulin a, qn': 'IgA',
+})
+
+
+def _key(name):
+    n = re.sub(r'\s+', ' ', name.strip().lower())
+    n = re.sub(r',\s*(serum|plasma|blood|whole blood)$', '', n)  # "Glucose, Serum" -> "glucose"
+    return n
+
+
 def normalize(rows):
     """Rename analytes to one standard name and drop duplicates of the same value on the same day."""
     seen, out = set(), []
     for r in rows:
         r = dict(r)
-        r['analyte'] = SYNONYMS.get(r['analyte'].strip().lower(), r['analyte'].strip())
+        k = _key(r['analyte'])
+        r['analyte'] = SYNONYMS.get(r['analyte'].strip().lower()) or SYNONYMS.get(k) or (
+            r['analyte'].strip() if k == r['analyte'].strip().lower() else re.sub(r',\s*(Serum|Plasma|Blood)$', '', r['analyte'].strip(), flags=re.I))
         key = (r['date'], r.get('time'), r['analyte'], r['num'] if r['num'] is not None else r['value'])
         if key in seen:
             continue
         seen.add(key)
         out.append(r)
+    return out
+
+
+# ---- LabCorp "Patient Report" tables -----------------------------------------------------
+# "Date Collected: 03/14/2013", then under a "Test  Current Result and Flag ... Units  Reference
+# Interval" header, rows such as
+#   "RBC 01            4.90          x10E6/uL     3.77-5.28"
+#   "MCH     01"  followed by  "      25.5     Low     pg     26.6-33.0"   (value on the next line)
+_LC_DATE = re.compile(r'Date [Cc]ollected:\s*(\d{1,2})/(\d{1,2})/(\d{2,4})')
+_LC_HEADER = re.compile(r'Current Result and Flag')
+_LC_CODE = re.compile(r'\s+\d{2}$')               # the lab-site code after a test name
+_LC_RANGE = re.compile(r'^(?:[<>]=?\s*-?\d[\d.,]*|-?\d[\d.,]*\s*-\s*-?\d[\d.,]*)$')
+_LC_FLAGS = {'high': 'H', 'low': 'L', 'abnormal': 'A', 'critical': 'C', 'alert': 'A', 'h': 'H', 'l': 'L'}
+_LC_VALUE = re.compile(r'^(?:[<>]=?\s*)?-?\d[\d.,]*$|^(negative|positive|not detected|detected|nonreactive|'
+                       r'non-reactive|reactive|normal|abnormal|see below|weak positive|equivocal)$', re.I)
+_LC_DATE_CELL = re.compile(r'^\d{1,2}/\d{1,2}/\d{2,4}$')
+
+
+_LC_SITE = re.compile(r'^0\d$')                 # the same code as its own column ("WBC     01")
+_LC_JUNK_NAME = re.compile(r'\d\s*-\s*\d|>or=|<or=|^(result \d+|written authorization|ambig abbrev)', re.I)
+
+
+def _cells(line):
+    cells = [c for c in re.split(r'\s{2,}', line.strip()) if c]
+    if len(cells) >= 2 and _LC_SITE.match(cells[1]) and not _LC_CODE.search(cells[0]):
+        cells.pop(1)
+    return cells
+
+
+def labcorp_labs(text, facility=None):
+    """Result rows from LabCorp patient reports (one dict per result, like the other parsers)."""
+    if not _LC_HEADER.search(text or ''):
+        return []
+    out, date, in_table, pending = [], None, False, None
+    for raw in (text or '').replace('\f', '\n').splitlines():
+        if not raw.strip():
+            continue
+        m = _LC_DATE.search(raw)
+        if m:
+            mo, d, y = m.groups()
+            y = int(y) + (2000 if len(y) == 2 else 0)
+            date = f'{y:04d}-{int(mo):02d}-{int(d):02d}'
+            in_table = False
+            continue
+        if _LC_HEADER.search(raw):
+            in_table, pending = True, None
+            continue
+        if not raw.startswith(' '):  # panel titles, page footers, patient header lines
+            in_table = '(Cont.)' in raw
+            pending = None
+            continue
+        if not in_table or not date:
+            continue
+        cells = _cells(raw)
+        if pending is None and cells and not _LC_VALUE.match(cells[0]):
+            name = _LC_CODE.sub('', cells[0]).strip()
+            rest = cells[1:]
+            if len(cells) == 1 and _LC_CODE.search(cells[0]) is None and cells[0].endswith(','):
+                pending = ('join', name)  # a name broken over two lines
+                continue
+            if pending and pending[0] == 'join':
+                name = pending[1] + ' ' + name
+            if not rest:
+                pending = ('value', name)  # the value is on the next line
+                continue
+            pending = None
+        elif pending and pending[0] == 'join' and cells:
+            name, rest, pending = pending[1] + ' ' + _LC_CODE.sub('', cells[0]).strip(), cells[1:], None
+        elif pending and pending[0] == 'value':
+            name, rest, pending = pending[1], cells, None
+        else:
+            continue
+        if not rest or not _LC_VALUE.match(rest[0]) or len(name) > 60 or ':' in name or _LC_JUNK_NAME.search(name):
+            continue
+        value, flag, unit, ref = rest[0], None, None, None
+        tail = rest[1:]
+        if tail and tail[0].lower() in _LC_FLAGS:
+            flag = _LC_FLAGS[tail.pop(0).lower()]
+        # previous result (and its date), when shown, sit between the flag and the units
+        if len(tail) >= 2 and _LC_DATE_CELL.match(tail[1]):
+            tail = tail[2:]
+        elif tail and not re.match(r'^-?\d', value) and _LC_VALUE.match(tail[0]):
+            tail = tail[1:]  # "Negative  Negative": the second is last time's result
+        for c in tail:
+            if _LC_RANGE.match(c):
+                ref = c.replace(' ', '')
+            elif _LC_DATE_CELL.match(c) or c.lower() in _LC_FLAGS:
+                continue
+            elif unit is None and len(c) <= 15 and not _LC_VALUE.match(c):
+                unit = c
+        v = value.replace(',', '')
+        try:
+            num = None if v[0] in '<>' else float(v)
+        except ValueError:
+            num = None
+        out.append({'date': date, 'analyte': name, 'value': value + (f' {unit}' if unit else ''), 'num': num,
+                    'unit': unit, 'ref_range': ref, 'flag': flag or (flag_for(num, ref.replace('-', ' - ')) if ref else None),
+                    'facility': facility or 'LabCorp'})
     return out

@@ -38,7 +38,8 @@ INTEGER = {'abnormal'}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
-ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT']}  # columns added after the first release
+ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
+                       'person_edited INTEGER DEFAULT 0']}  # columns added after the first release
 # A financial row whose kind mentions an estimate or quote is not a charge: no work was billed.
 ESTIMATE_SQL = "(lower(coalesce(kind,'')) LIKE '%estimate%' OR lower(coalesce(kind,'')) LIKE '%quote%')"
 
@@ -69,7 +70,9 @@ def _schema():
         edited INTEGER DEFAULT 0, added TEXT, updated TEXT,
         status TEXT,                    -- 'processing' while an upload is being read, else done/error
         review_note TEXT,               -- questions for a person about this document
-        duplicate_of TEXT               -- an upload that looks like a copy of this document
+        duplicate_of TEXT,              -- an upload that looks like a copy of this document
+        classified TEXT,                -- version of the sorting rules that last sorted this upload
+        person_edited INTEGER DEFAULT 0 -- a person saved it; never re-sorted automatically
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
         title, facility, text, content='documents', content_rowid='rowid',
@@ -356,7 +359,7 @@ class Store:
             vals['needs_review'] = 1 if vals['needs_review'] else 0
         if not vals:
             raise ValidationError('nothing to update')
-        vals.update(edited=1, updated=now())
+        vals.update(edited=1, person_edited=1, updated=now())
         with self.lock:
             n = self.db.execute(f'UPDATE documents SET {", ".join(f"{k}=?" for k in vals)} WHERE id=?',
                                 [*vals.values(), did]).rowcount
@@ -397,6 +400,13 @@ class Store:
         return self.db.execute('SELECT 1 FROM financial WHERE date IS ? AND charged=? LIMIT 1',
                                (date, float(charged))).fetchone() is not None
 
+    def clear_upload_entries(self, did):
+        """Entries read from an upload (not edited by a person), before reading it again."""
+        with self.lock:
+            self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
+            self.db.execute("DELETE FROM financial WHERE id=? AND edited=0", (f'fin-u{did[:10]}',))
+            self.db.commit()
+
     def delete_upload(self, did):
         """Remove a document added from the dashboard and the entries read from it."""
         d = self.document(did)
@@ -409,11 +419,16 @@ class Store:
             self.db.commit()
         return d
 
+    def stale_uploads(self, version):
+        """Uploads sorted by older rules that no person has touched yet."""
+        return [r[0] for r in self.db.execute(
+            "SELECT id FROM documents WHERE path LIKE 'Uploaded/%' AND status='done' AND person_edited=0 "
+            "AND coalesce(classified,'')<>?", (version,))]
+
     def known_facilities(self):
         names = set()
         for table, col in (('documents', 'facility'), ('encounters', 'facility'), ('tests', 'facility'),
-                           ('procedures', 'facility'), ('providers', 'facility'), ('imaging', 'facility'),
-                           ('financial', 'payee')):
+                           ('procedures', 'facility'), ('providers', 'facility'), ('imaging', 'facility')):
             names.update(r[0] for r in self.db.execute(f'SELECT DISTINCT {col} FROM {table}') if r[0])
         return sorted(names)
 
@@ -421,7 +436,7 @@ class Store:
         """(facility, category, text) of documents a person has confirmed or that were catalogued."""
         return [(r[0], r[1], r[2]) for r in self.db.execute(
             "SELECT facility, category, text FROM documents WHERE needs_review=0 AND facility IS NOT NULL "
-            "AND coalesce(status, 'done')='done'")]
+            "AND coalesce(status, 'done')='done' AND (path NOT LIKE 'Uploaded/%' OR person_edited=1)")]
 
     def set_has_file(self, did, has=True):
         with self.lock:

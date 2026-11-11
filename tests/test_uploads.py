@@ -44,6 +44,29 @@ Total Treatment Plan  $1,370.00
 This estimate is not a bill. Insurance estimates may change.
 """
 
+LABCORP = """Doe, Jane                         DOB: 02/03/1970                Patient Report
+Patient ID: 123                    Age: 50                        Account Number: 9
+Specimen ID: 000-000-0000-0        Sex: Female                    Ordering Physician: A EXAMPLE
+Date Collected: 03/14/2020  Date Received: 03/14/2020  Date Reported: 03/15/2020
+Ordered Items: CBC; Lipase, Serum; Strep Screen
+CBC With Differential/Platelet
+      Test                          Current Result and Flag     Previous Result and Date     Units      Reference Interval
+      WBC     01
+                                    4.8                                                      x10E3/uL   4.0-10.5
+      MCH     01
+                                    25.5          Low                                        pg         26.6-33.0
+      Neutrophils 01                50                                                       %          40-74
+      Glucose, Serum         01
+                                    100           High                                       mg/dL      65-99
+      Immunoglobulin A, Qn,
+      Serum 01                      181                                                      mg/dL      91-414
+      Strep Screen  01
+                                    Negative                     Negative     02/01/2019
+      Equivocal 20.1 - 24.9         Positive >or= 25.0
+      Lipase, Serum 01              53                                                       U/L        0-59
+(c)2020 Laboratory Corporation of America Holdings
+"""
+
 VAGUE = """Dear Jane,
 Thank you for your letter. We will be in touch.
 Sincerely, the office
@@ -98,6 +121,37 @@ class ClassifyTests(unittest.TestCase):
         r = classify.classify(head + 'Results follow\n', 'x.pdf', [], filed)
         self.assertEqual(r['facility'], 'Valley Hospital')
         self.assertTrue(any('Is it from Valley Hospital' in q for q in r['questions']))
+
+
+class LabCorpTests(unittest.TestCase):
+    def test_values_units_ranges_and_flags(self):
+        from healthdash import parsers
+        rows = {r['analyte']: r for r in parsers.normalize(parsers.labcorp_labs(LABCORP))}
+        self.assertEqual(rows['WBC']['num'], 4.8)
+        self.assertEqual((rows['MCH']['num'], rows['MCH']['flag'], rows['MCH']['ref_range']), (25.5, 'L', '26.6-33.0'))
+        self.assertEqual(rows['Neutrophils %']['num'], 50)      # a two-digit result is not a lab code
+        self.assertEqual((rows['Glucose']['num'], rows['Glucose']['flag']), (100, 'H'))  # "Glucose, Serum"
+        self.assertEqual(rows['IgA']['num'], 181)                # name broken over two lines
+        self.assertEqual(rows['Strep Screen']['value'], 'Negative')  # not "Negative Negative"
+        self.assertEqual(rows['Lipase']['num'], 53)
+        self.assertFalse(any('Equivocal' in k for k in rows))
+        self.assertTrue(all(r['date'] == '2020-03-14' for r in rows.values()))
+
+    def test_labcorp_report_is_filed_as_labs_from_labcorp(self):
+        r = classify.classify(LABCORP, 'document6.pdf', ['1159 Main St, Springfield', 'Springfield'])
+        self.assertEqual((r['category'], r['facility'], r['doc_date']), ('labs', 'LabCorp', '2020-03-14'))
+        self.assertEqual(r['questions'], [])
+
+    def test_addresses_and_insurers_are_not_places(self):
+        self.assertFalse(classify.looks_like_place('1159 Main St, Springfield'))
+        self.assertFalse(classify.looks_like_place('Acme Health Plan (insurance)'))
+        self.assertTrue(classify.looks_like_place('Riverside General Hospital'))
+        self.assertTrue(classify.looks_like_place('ABC Orthopedics'))
+
+    def test_most_mentioned_place_wins(self):
+        text = 'Riverside General Hospital\n' * 5 + 'part of Valley Health Network\n'
+        r = classify.classify(text, 'x.pdf', ['Riverside General Hospital', 'Valley Health Network'])
+        self.assertEqual(r['facility'], 'Riverside General Hospital')
 
 
 class UploadTests(unittest.TestCase):
@@ -177,6 +231,25 @@ class UploadTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(d['status'], 'error')
         self.assertIn('no tools', d['review_note'])
+
+
+class ResortTests(unittest.TestCase):
+    def test_untouched_uploads_are_sorted_again_but_saved_ones_are_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            files = os.path.join(tmp, 'f')
+            os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            texts = {b'%PDF-1 a': VAGUE, b'%PDF-1 b': VAGUE + ' second'}
+            up = Uploads(store, files, extractor=lambda p: {'pages': [texts[open(p, 'rb').read()]], 'ocr_pages': []})
+            a = up.add('a.pdf', b'%PDF-1 a')['id']
+            b = up.add('b.pdf', b'%PDF-1 b')['id']
+            for _ in range(100):
+                if all(store.document(x)['status'] == 'done' for x in (a, b)):
+                    break
+                time.sleep(0.05)
+            store.update_document(b, {'title': 'Checked by a person', 'needs_review': 0})
+            self.assertEqual(store.stale_uploads('new-rules'), [a])  # b was saved by a person
+            store.close()
 
 
 class DuplicateTests(unittest.TestCase):
