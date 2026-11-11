@@ -1,0 +1,13 @@
+{
+  "_note": "Copy to data/local.json (git-ignored) and fill in. Everything here is optional.",
+  "title": "Our Health",
+  "source": "~/Documents/Health Records (originals)",
+  "organized": "~/Documents/Health Records (sorted)",
+  "dashboard_url": "http://192.168.1.50:9380",
+  "name_words": ["jdoe", "jane", "doe"],
+  "noise_lines": ["JANE DOE", "Example Health Portal"],
+  "facility_short": [
+    ["Riverside General", "Riverside"],
+    ["Maple Street Family", "Maple-Family"]
+  ]
+}

@@ -1,0 +1,24 @@
+# Never commit medical data
+*.pdf
+*.PDF
+*.db
+*.db-*
+*.sqlite*
+*.tif
+*.TIF
+*.doc
+*.docx
+*.wav
+*.iso
+*.jpg
+*.png
+data/
+inbox/
+extracted/
+backups/
+__pycache__/
+*.pyc
+.DS_Store
+deploy/local.env
+# the one demo screenshot (made-up sample data)
+!docs/screenshot.jpg

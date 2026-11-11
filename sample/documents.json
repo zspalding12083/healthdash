@@ -1,0 +1,23 @@
+[
+  {"id": "doc-er-2019", "path": "2019/ER visit ankle.pdf", "title": "ER visit: ankle injury", "doc_date": "2019-06-18",
+   "category": "hospital", "facility": "Riverside General Hospital", "pages": 2, "ext": ".pdf",
+   "text": "Emergency department note. Patient rolled right ankle playing basketball. X-ray right ankle: nondisplaced hairline fracture of the distal fibula. Plan: posterior splint, crutches, Demoprofen 400 mg as needed, orthopedics in one week."},
+  {"id": "doc-ortho-2019", "path": "2019/Ortho follow up.pdf", "title": "Orthopedics follow-up", "doc_date": "2019-06-25",
+   "category": "office", "facility": "Maple Street Orthopedics", "pages": 1, "ext": ".pdf",
+   "text": "Fracture healing as expected. Transition to walking boot for six weeks, then physical therapy."},
+  {"id": "doc-admit-2021", "path": "2021/Discharge summary.pdf", "title": "Discharge summary: appendectomy", "doc_date": "2021-04-11",
+   "category": "hospital", "facility": "Riverside General Hospital", "pages": 3, "ext": ".pdf",
+   "text": "Admitted with right lower quadrant pain. CT abdomen and pelvis: acute appendicitis without abscess. Laparoscopic appendectomy performed. Discharged on Fakeazole 500 mg twice daily for seven days."},
+  {"id": "doc-labs-2021", "path": "2021/Lab results.pdf", "title": "Lab results during admission", "doc_date": "2021-04-11",
+   "category": "labs", "facility": "Riverside General Hospital", "pages": 2, "ext": ".pdf",
+   "text": "WBC 14.2 H, 11.6 H, 8.9. Glucose 112 H."},
+  {"id": "doc-annual-2023", "path": "2023/Annual physical.pdf", "title": "Annual physical", "doc_date": "2023-05-02",
+   "category": "office", "facility": "Maple Street Family Practice", "pages": 2, "ext": ".pdf",
+   "text": "Blood pressure 148/92 on two readings. Hemoglobin A1c 6.0 (prediabetes range). Start Examplol 10 mg daily. ECG normal sinus rhythm."},
+  {"id": "doc-bill-2021", "path": "2021/Hospital bill.pdf", "title": "Hospital statement", "doc_date": "2021-05-20",
+   "category": "financial", "facility": "Riverside General Hospital", "pages": 1, "ext": ".pdf",
+   "text": "Statement of account. Total charges 18,450.00. Insurance paid 16,200.00. Adjustments 1,750.00. Patient balance 500.00."},
+  {"id": "doc-new-letter", "path": "inbox/letter.pdf", "title": "Letter", "doc_date": "2024-06",
+   "category": "other", "pages": 1, "ext": ".pdf", "needs_review": true,
+   "text": "New file dropped in the inbox; shows up under Needs review until someone confirms what it is."}
+]

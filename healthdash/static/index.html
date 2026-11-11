@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>__TITLE__</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23256c6c'/%3E%3Cpath d='M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f5f6f4;--panel:#fff;--ink:#1d2421;--ink2:#56605b;--ink3:#8a938e;--line:#e2e5e1;--line2:#eef0ed;
+  --accent:#256c6c;--accent-soft:#e3f0ef;--warn:#a5521b;--warn-soft:#fbeee4;--bad:#b3261e;--bad-soft:#fbe9e7;
+  --ok:#2f6b2f;--ok-soft:#e7f2e5;
+  --c-enc:#2f5f9e;--c-test:#7a4fa0;--c-proc:#b3261e;--c-med:#2f7a4a;--c-img:#9c6a12;--c-fin:#6b6b6b;
+  --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
+  --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
+  --ok:#8fcf8a;--ok-soft:#1f3320;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-fin:#a0a0a0;
+  --shadow:none;
+}}
+:root[data-theme=dark]{
+  --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
+  --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
+  --ok:#8fcf8a;--ok-soft:#1f3320;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-fin:#a0a0a0;
+  --shadow:none;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent)}
+button,input,select,textarea{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line)}
+.bar{max-width:1200px;margin:0 auto;padding:12px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.brand{font-weight:650;font-size:17px;white-space:nowrap}
+.brand small{display:block;font-weight:400;font-size:12px;color:var(--ink3)}
+#q{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+#q:focus{outline:2px solid var(--accent);outline-offset:-1px}
+nav{max-width:1200px;margin:0 auto;padding:0 10px;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+nav button{border:0;background:none;padding:9px 11px;border-bottom:2px solid transparent;color:var(--ink2);cursor:pointer;white-space:nowrap}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+nav .sep{flex:1}
+nav .fin{color:var(--ink3)}
+.badge{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--warn-soft);color:var(--warn);font-size:11px;font-weight:600;text-align:center;margin-left:4px}
+main{max-width:1200px;margin:0 auto;padding:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
+h2{font-size:16px;margin:0 0 12px}
+h3{font-size:14px;margin:16px 0 8px;color:var(--ink2)}
+.muted{color:var(--ink3)}.small{font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
+.tile b{display:block;font-size:22px;font-weight:650}
+.tile span{color:var(--ink3);font-size:13px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:4px 11px;cursor:pointer;font-size:13px;color:var(--ink2)}
+.chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+select.f{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.tl-year{font-weight:650;font-size:13px;color:var(--ink3);margin:18px 0 6px;letter-spacing:.04em}
+.ev{display:grid;grid-template-columns:96px 12px 1fr;gap:10px;padding:8px 6px;border-radius:8px;cursor:pointer}
+.ev:hover{background:var(--line2)}
+.ev .d{color:var(--ink2);font-size:13px;font-variant-numeric:tabular-nums;padding-top:1px}
+.ev .dot{width:10px;height:10px;border-radius:50%;margin-top:5px}
+.ev .t{font-weight:550}
+.ev .s{color:var(--ink2);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.k-encounters{background:var(--c-enc)}.k-tests{background:var(--c-test)}.k-procedures{background:var(--c-proc)}
+.k-medications{background:var(--c-med)}.k-imaging{background:var(--c-img)}.k-financial{background:var(--c-fin)}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--line2);color:var(--ink2);margin-left:6px;vertical-align:1px}
+.tag.bad{background:var(--bad-soft);color:var(--bad)}.tag.ok{background:var(--ok-soft);color:var(--ok)}.tag.warn{background:var(--warn-soft);color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-weight:600;color:var(--ink2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+td{padding:8px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--line2)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.nowrap{white-space:nowrap}
+.tablewrap{overflow-x:auto}
+.medbars{position:relative}
+.medrow{display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center;padding:3px 0;cursor:pointer}
+.medrow .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track{position:relative;height:14px;background:var(--line2);border-radius:4px}
+.seg{position:absolute;top:0;bottom:0;border-radius:4px;background:var(--c-med);opacity:.85}
+.seg.unknown-start{background:linear-gradient(90deg,transparent,var(--c-med) 30%)}
+.axis{display:grid;grid-template-columns:200px 1fr;gap:10px;font-size:11px;color:var(--ink3)}
+.axis .ticks{position:relative;height:16px}
+.axis .ticks span{position:absolute;transform:translateX(-50%)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
+.card .t{font-weight:600}
+.spark{width:100%;height:70px;display:block}
+.hit{padding:10px 6px;border-bottom:1px solid var(--line2);cursor:pointer}.hit:hover{background:var(--line2)}
+.hit mark{background:var(--warn-soft);color:inherit;padding:0 1px;border-radius:2px}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 12px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--bad)}
+dialog{border:0;border-radius:14px;padding:0;width:min(1000px,96vw);max-height:92vh;background:var(--panel);color:var(--ink);box-shadow:0 10px 40px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
+.dlg-h h2{margin:0}
+.dlg-b{padding:16px;overflow:auto;max-height:calc(92vh - 60px)}
+.docview{display:grid;grid-template-columns:1fr 320px;gap:16px}
+.docview iframe{width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#fff}
+.doctext{white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;max-height:70vh;overflow:auto}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:14px;margin-bottom:12px}
+.kv div:nth-child(odd){color:var(--ink3)}
+form.edit{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+form.edit label{display:flex;flex-direction:column;font-size:12px;color:var(--ink2);gap:3px}
+form.edit input,form.edit textarea,form.edit select{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+form.edit .wide{grid-column:1/-1}
+.row-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.empty{padding:30px;text-align:center;color:var(--ink3)}
+.fin-note{font-size:13px;color:var(--ink3);margin:-4px 0 12px}
+@media (max-width:760px){
+  .docview{grid-template-columns:1fr}
+  .medrow,.axis{grid-template-columns:110px 1fr}
+  .ev{grid-template-columns:78px 10px 1fr}
+  .hide-sm{display:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">__TITLE__<small id="span"></small></div>
+    <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
+    <button class="btn" id="theme" title="Light / dark">◐</button>
+  </div>
+  <nav id="tabs"></nav>
+</header>
+<main id="main"><div class="empty">Loading…</div></main>
+
+<dialog id="dlg"><div class="dlg-h"><div id="dlg-title"></div><button class="btn" id="dlg-close">Close</button></div><div class="dlg-b" id="dlg-body"></div></dialog>
+
+<script>
+'use strict';
+const TABS = [
+  ['timeline','Timeline'],['meds','Medications'],['visits','Visits'],['tests','Tests & imaging'],
+  ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['providers','Doctors'],
+  ['documents','Documents'],['review','Needs review'],['sep',''],['financial','Financial']
+];
+const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',providers:'Doctor',financial:'Financial'};
+const FIELDS = {
+  encounters:['date','end_date','type','facility','provider','reason','summary'],
+  tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
+  labs:['date','panel','analyte','value','num','unit','ref_range','flag','facility'],
+  procedures:['date','name','facility','provider','notes','encounter_id'],
+  medications:['name','dose','schedule','purpose','start_date','end_date','status','prescriber','notes'],
+  conditions:['name','status','first_noted','notes'],
+  allergies:['substance','reaction','severity'],
+  imaging:['date','modality','description','facility','location','notes'],
+  providers:['name','specialty','facility','phone','notes'],
+  financial:['date','kind','payee','account','description','charged','paid','adjusted','owed','notes','encounter_id'],
+};
+const LONG = new Set(['summary','result','notes','description','reason']);
+const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging']), year:'', fac:''}};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = v => v == null ? '' : (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fdate(d){ if(!d) return ''; const [y,m,dd] = d.split('-'); return [dd&&+dd, m&&MON[+m-1], y].filter(Boolean).join(' '); }
+function datePlus(d){ return d ? (d.length===4? d+'-07-01' : d.length===7? d+'-15' : d) : null; }
+async function api(path, opts={}){
+  const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+async function load(name, path, force){
+  if(force || !(name in S.data)) S.data[name] = await api(path);
+  return S.data[name];
+}
+function invalidate(){ S.data = {}; }
+
+// ---------- theme ----------
+try{ const t = localStorage.getItem('hd-theme'); if(t) document.documentElement.dataset.theme = t; }catch(e){}
+$('#theme').onclick = () => {
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try{ localStorage.setItem('hd-theme', next); }catch(e){}
+};
+
+// ---------- tabs & routing ----------
+function renderTabs(review=0){
+  $('#tabs').innerHTML = TABS.map(([id,label]) => id==='sep' ? '<span class="sep"></span>' :
+    `<button data-tab="${id}" class="${S.tab===id?'on':''} ${id==='financial'?'fin':''}">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}</button>`).join('');
+  $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.tab));
+}
+function go(tab){ S.tab = tab; location.hash = tab; $('#q').value = ''; render(); }
+window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if(t && t!==S.tab && TABS.some(x=>x[0]===t)){ S.tab=t; render(); } });
+
+let qTimer;
+$('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => { $('#q').value.trim() ? renderSearch($('#q').value) : render(); }, 220); });
+
+async function render(){
+  const sum = await load('summary','/api/summary');
+  renderTabs(sum.needs_review);
+  $('#span').textContent = sum.first_date ? `Records ${sum.first_date.slice(0,4)} to ${sum.last_date.slice(0,4)}` : '';
+  const m = $('#main');
+  try{
+    const fn = VIEWS[S.tab] || VIEWS.timeline;
+    m.innerHTML = await fn(sum);
+    bind(m);
+  }catch(e){ m.innerHTML = `<div class="panel">Couldn't load: ${esc(e.message)}</div>`; }
+}
+function bind(root){
+  root.querySelectorAll('[data-open]').forEach(el => el.onclick = ev => { ev.stopPropagation(); const [k,id] = el.dataset.open.split('|'); openRecord(k,id); });
+  root.querySelectorAll('[data-doc]').forEach(el => el.onclick = ev => { ev.stopPropagation(); openDoc(el.dataset.doc); });
+  root.querySelectorAll('[data-add]').forEach(el => el.onclick = () => editRecord(el.dataset.add, null));
+  root.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => sortTable(th));
+}
+function sortTable(th){
+  const tbl = th.closest('table'), idx = [...th.parentNode.children].indexOf(th);
+  const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc'; th.dataset.dir = dir;
+  const rows = [...tbl.tBodies[0].rows];
+  rows.sort((a,b) => { const x = a.cells[idx].dataset.v ?? a.cells[idx].textContent, y = b.cells[idx].dataset.v ?? b.cells[idx].textContent;
+    const nx = parseFloat(x), ny = parseFloat(y); const c = (!isNaN(nx)&&!isNaN(ny)) ? nx-ny : x.localeCompare(y); return dir==='asc'?c:-c; });
+  rows.forEach(r => tbl.tBodies[0].appendChild(r));
+}
+
+// ---------- views ----------
+const VIEWS = {};
+
+VIEWS.timeline = async (sum) => {
+  const ev = await load('timeline','/api/timeline');
+  const c = sum.counts;
+  const years = [...new Set(ev.map(e => e.date.slice(0,4)))].sort().reverse();
+  const facs = [...new Set(ev.map(e => e.facility).filter(Boolean))].sort();
+  const f = S.filters;
+  const shown = ev.filter(e => f.kinds.has(e.kind) && (!f.year || e.date.startsWith(f.year)) && (!f.fac || e.facility===f.fac));
+  let html = `<div class="tiles">
+    <div class="tile"><b>${c.encounters}</b><span>visits & admissions</span></div>
+    <div class="tile"><b>${c.tests + c.imaging}</b><span>tests & imaging</span></div>
+    <div class="tile"><b>${c.procedures}</b><span>procedures</span></div>
+    <div class="tile"><b>${sum.current_meds.length}</b><span>current medications</span></div>
+    <div class="tile"><b>${c.documents}</b><span>documents</span></div>
+  </div>`;
+  if(sum.last_visit) html += `<div class="panel small">Most recent visit: <a href="#" data-open="encounters|${esc(sum.last_visit.id)}">${fdate(sum.last_visit.date)}, ${esc(sum.last_visit.facility||'')}: ${esc(sum.last_visit.reason||sum.last_visit.type||'')}</a></div>`;
+  html += `<div class="panel"><div class="filters">` +
+    [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Med changes']]
+      .map(([k,l]) => `<button class="chip ${f.kinds.has(k)?'on':''}" data-kind="${k}"><span class="dot k-${k}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>${l}</button>`).join('') +
+    `<select class="f" id="f-year"><option value="">All years</option>${years.map(y=>`<option ${f.year===y?'selected':''}>${y}</option>`).join('')}</select>
+     <select class="f" id="f-fac"><option value="">All places</option>${facs.map(x=>`<option ${f.fac===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
+     <span class="muted small">${shown.length} events</span></div>`;
+  if(!shown.length) html += '<div class="empty">Nothing matches these filters.</div>';
+  let yr = '';
+  for(const e of shown){
+    const y = e.date.slice(0,4);
+    if(y !== yr){ yr = y; html += `<div class="tl-year">${y}</div>`; }
+    const range = e.end_date && e.end_date !== e.date ? ` to ${fdate(e.end_date)}` : '';
+    html += `<div class="ev" data-open="${e.kind}|${esc(e.id)}"><div class="d">${fdate(e.date)}</div><div class="dot k-${e.kind}"></div>
+      <div><div class="t">${esc(e.title)}${e.abnormal?'<span class="tag bad">abnormal</span>':''}${range?`<span class="tag">${esc(range.trim())}</span>`:''}</div>
+      <div class="s">${e.facility?esc(e.facility)+' · ':''}${esc(e.detail||'')}</div></div></div>`;
+  }
+  html += '</div>';
+  setTimeout(() => {
+    document.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { const k=b.dataset.kind; f.kinds.has(k)?f.kinds.delete(k):f.kinds.add(k); render(); });
+    $('#f-year').onchange = e => { f.year = e.target.value; render(); };
+    $('#f-fac').onchange = e => { f.fac = e.target.value; render(); };
+  });
+  return html;
+};
+
+VIEWS.meds = async () => {
+  const meds = await load('medications','/api/medications');
+  const al = await load('allergies','/api/allergies');
+  const current = meds.filter(m => m.status==='active' || (!m.end_date && !m.status));
+  const past = meds.filter(m => !current.includes(m));
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><button class="btn" data-add="medications">Add</button></div>
+    <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>When</th><th data-sort>For</th><th data-sort class="hide-sm">Since</th></tr></thead><tbody>` +
+    current.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.schedule)}</td><td>${esc(m.purpose)}</td><td class="nowrap hide-sm" data-v="${esc(m.start_date||'')}">${m.start_date?fdate(m.start_date):'<span class="muted">unknown</span>'}</td></tr>`).join('') +
+    `</tbody></table></div></div>`;
+  // history bars
+  const dated = meds.filter(m => m.start_date || m.end_date);
+  if(dated.length){
+    const today = new Date().toISOString().slice(0,10);
+    const all = dated.flatMap(m => [m.start_date, m.end_date].filter(Boolean)).map(datePlus).concat([today]).sort();
+    const t0 = new Date(all[0].slice(0,4)+'-01-01').getTime(), t1 = new Date(today).getTime() + 86400e3*30;
+    const pct = d => ((new Date(datePlus(d)).getTime() - t0) / (t1 - t0) * 100);
+    const byName = {};
+    for(const m of dated) (byName[m.name] ||= []).push(m);
+    const names = Object.keys(byName).sort((a,b) => { const sa = Math.min(...byName[a].map(m=>pct(m.start_date||m.end_date))), sb = Math.min(...byName[b].map(m=>pct(m.start_date||m.end_date))); return sa-sb; });
+    const y0 = +all[0].slice(0,4), y1 = +today.slice(0,4); const step = Math.max(1, Math.ceil((y1-y0)/8));
+    let ticks = ''; for(let y=y0; y<=y1; y+=step) ticks += `<span style="left:${pct(y+'-01-01')}%">${y}</span>`;
+    html += `<div class="panel"><h2>Medication history</h2><p class="muted small" style="margin-top:-6px">Each bar runs from when a medication shows up as started to when it was stopped. A faded start means the records don't say when it began, only when it was first listed.</p><div class="medbars">` +
+      names.map(n => `<div class="medrow" data-open="medications|${esc(byName[n][0].id)}"><div class="nm" title="${esc(n)}">${esc(n)}</div><div class="track">` +
+        byName[n].map(m => { const s = m.start_date ? pct(m.start_date) : pct(m.end_date) - 3; const e = m.end_date ? pct(m.end_date) : pct(today);
+          return `<div class="seg ${m.start_date?'':'unknown-start'}" style="left:${Math.max(0,s)}%;width:${Math.max(.8,e-Math.max(0,s))}%" title="${esc(m.name)} ${esc(m.dose||'')}: ${m.start_date?fdate(m.start_date):'?'} to ${m.end_date?fdate(m.end_date):'now'}"></div>`; }).join('') +
+        `</div></div>`).join('') +
+      `<div class="axis"><div></div><div class="ticks">${ticks}</div></div></div></div>`;
+  }
+  if(past.length) html += `<div class="panel"><h2>Past medications (${past.length})</h2><div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>For</th><th data-sort>Started</th><th data-sort>Stopped</th><th class="hide-sm">Why stopped / notes</th></tr></thead><tbody>` +
+    past.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.purpose)}</td><td class="nowrap" data-v="${esc(m.start_date||'')}">${fdate(m.start_date)}</td><td class="nowrap" data-v="${esc(m.end_date||'')}">${fdate(m.end_date)}</td><td class="hide-sm small">${esc(m.notes)}</td></tr>`).join('') + `</tbody></table></div></div>`;
+  html += `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Allergies</h2><button class="btn" data-add="allergies">Add</button></div>` +
+    (al.length ? `<table><tbody>${al.map(a => `<tr class="click" data-open="allergies|${esc(a.id)}"><td><b>${esc(a.substance)}</b></td><td>${esc(a.reaction)}</td><td class="muted">${esc(a.severity||'')}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None recorded.</div>') + `</div>`;
+  return html;
+};
+
+function recordTable(kind, rows, cols, title, opts={}){
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>${title} (${rows.length})</h2><button class="btn" data-add="${kind}">Add</button></div>`;
+  if(opts.note) html += `<p class="fin-note">${opts.note}</p>`;
+  if(!rows.length) return html + '<div class="empty">None yet.</div></div>';
+  html += `<div class="tablewrap"><table><thead><tr>${cols.map(c => `<th data-sort class="${c[2]||''}">${c[1]}</th>`).join('')}<th></th></tr></thead><tbody>`;
+  for(const r of rows){
+    html += `<tr class="click" data-open="${kind}|${esc(r.id)}">` + cols.map(([f,,cls]) => {
+      let v = r[f];
+      if(f.endsWith('date') || f==='date' || f==='first_noted') return `<td class="nowrap ${cls||''}" data-v="${esc(v||'')}">${fdate(v)}</td>`;
+      if(['charged','paid','adjusted','owed'].includes(f)) return `<td class="num ${cls||''}" data-v="${v??''}">${money(v)}</td>`;
+      if(f==='abnormal') return `<td class="${cls||''}">${v?'<span class="tag bad">abnormal</span>':''}</td>`;
+      if(f==='status') return `<td class="${cls||''}"><span class="tag ${v==='active'?'warn':v==='resolved'?'ok':''}">${esc(v||'')}</span></td>`;
+      return `<td class="${cls||''}">${f===cols[0][0]||f==='name'||f==='reason'?`<b>${esc(v)}</b>`:esc(v)}</td>`;
+    }).join('') + `<td class="nowrap">${(r.docs||[]).length?`<span class="tag" title="has source document">📄 ${(r.docs||[]).length}</span>`:''}${r.needs_review?'<span class="tag warn">review</span>':''}</td></tr>`;
+  }
+  return html + '</tbody></table></div></div>';
+}
+
+VIEWS.visits = async () => recordTable('encounters', await load('encounters','/api/encounters'),
+  [['date','Date'],['end_date','Until','hide-sm'],['type','Type'],['facility','Where'],['provider','Doctor','hide-sm'],['reason','Reason']], 'Visits and admissions');
+
+VIEWS.tests = async () => {
+  const tests = await load('tests','/api/tests'), img = await load('imaging','/api/imaging');
+  return recordTable('tests', tests, [['date','Date'],['name','Test'],['category','Type','hide-sm'],['facility','Where'],['result','Result / impression'],['abnormal','']], 'Tests and reports') +
+    recordTable('imaging', img, [['date','Date'],['modality','Type'],['description','Study'],['facility','Where'],['location','Disc / images','hide-sm']], 'Imaging discs', {note:'The actual images (CT/MRI slices) are on the discs copied into the records folder. Open them with the viewer on the disc or any DICOM viewer.'});
+};
+
+VIEWS.procedures = async () => recordTable('procedures', await load('procedures','/api/procedures'),
+  [['date','Date'],['name','Procedure'],['facility','Where'],['provider','Surgeon / doctor','hide-sm'],['notes','Notes','hide-sm']], 'Surgeries and procedures');
+
+VIEWS.conditions = async () => recordTable('conditions', await load('conditions','/api/conditions'),
+  [['name','Condition'],['status','Status'],['first_noted','First noted'],['notes','Notes','hide-sm']], 'Diagnoses and conditions');
+
+VIEWS.providers = async () => recordTable('providers', await load('providers','/api/providers'),
+  [['name','Name'],['specialty','Specialty'],['facility','Practice / hospital'],['phone','Phone','hide-sm']], 'Doctors and care team');
+
+VIEWS.labs = async () => {
+  const series = await load('labseries','/api/labs/series');
+  const labs = await load('labs','/api/labs');
+  const names = Object.keys(series).sort();
+  let html = `<div class="panel"><h2>Lab trends</h2><p class="muted small" style="margin-top:-6px">Every lab value that was measured more than once. The shaded band is the normal range; red dots were flagged high or low.</p><div class="cards">`;
+  for(const n of names){
+    const pts = series[n]; const last = pts[pts.length-1];
+    html += `<div class="card"><div class="t">${esc(n)} <span class="muted small">${esc(last.unit||'')}</span></div>
+      <div class="small muted">Latest ${esc(last.value)} on ${fdate(last.date)}${last.flag?` <span class="tag bad">${esc(last.flag)}</span>`:''}</div>${spark(pts)}</div>`;
+  }
+  html += names.length ? '</div></div>' : '</div><div class="empty">No repeated lab values yet.</div></div>';
+  html += recordTable('labs', labs, [['date','Date'],['panel','Panel','hide-sm'],['analyte','Test'],['value','Result'],['unit','Unit','hide-sm'],['ref_range','Normal range','hide-sm'],['flag','Flag'],['facility','Where','hide-sm']], 'All lab results');
+  return html;
+};
+function spark(pts){
+  const W=260,H=70,P=6;
+  const xs = pts.map(p => new Date(datePlus(p.date)).getTime());
+  const ys = pts.map(p => p.num);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const rr = (pts[pts.length-1].ref_range||'').match(/(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/);
+  let rl, rh; if(rr){ rl=+rr[1]; rh=+rr[2]; lo=Math.min(lo,rl); hi=Math.max(hi,rh); }
+  if(hi===lo){ hi+=1; lo-=1; }
+  const x0=Math.min(...xs), x1=Math.max(...xs)||x0+1;
+  const X = t => P + (x1===x0 ? (W-2*P)/2 : (t-x0)/(x1-x0)*(W-2*P));
+  const Y = v => H-P - (v-lo)/(hi-lo)*(H-2*P);
+  const band = rr ? `<rect x="0" y="${Y(rh)}" width="${W}" height="${Math.max(1,Y(rl)-Y(rh))}" fill="var(--ok-soft)"/>` : '';
+  const line = pts.map((p,i) => `${i?'L':'M'}${X(xs[i]).toFixed(1)},${Y(p.num).toFixed(1)}`).join('');
+  const dots = pts.map((p,i) => `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.num).toFixed(1)}" r="3" fill="${p.flag?'var(--bad)':'var(--accent)'}"><title>${fdate(p.date)}: ${esc(p.value)} ${esc(p.unit||'')}</title></circle>`).join('');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${band}<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>${dots}</svg>`;
+}
+
+VIEWS.documents = async () => {
+  const docs = await load('documents','/api/documents');
+  const cats = [...new Set(docs.map(d => d.category||'other'))].sort();
+  let html = `<div class="panel"><h2>All documents (${docs.length})</h2><div class="filters"><select class="f" id="f-cat"><option value="">All kinds</option>${cats.map(c=>`<option ${S.docCat===c?'selected':''}>${esc(c)}</option>`).join('')}</select><span class="muted small">Click a row to read it. Scanned pages were turned into text so they're searchable too.</span></div>
+    <div class="tablewrap"><table><thead><tr><th data-sort>Date</th><th data-sort>Document</th><th data-sort>Kind</th><th data-sort class="hide-sm">From</th><th data-sort class="hide-sm">Pages</th><th></th></tr></thead><tbody>`;
+  for(const d of docs.filter(d => !S.docCat || (d.category||'other')===S.docCat)){
+    html += `<tr class="click" data-doc="${d.id}"><td class="nowrap" data-v="${esc(d.doc_date||'')}">${fdate(d.doc_date)}</td><td><b>${esc(d.title)}</b><div class="small muted">${esc(d.organized_path||d.path)}</div></td><td>${esc(d.category||'')}</td><td class="hide-sm">${esc(d.facility||'')}</td><td class="hide-sm num">${d.pages??''}</td><td class="nowrap">${d.ocr_pages.length?'<span class="tag" title="text read from a scan">scan</span>':''}${d.needs_review?'<span class="tag warn">review</span>':''}</td></tr>`;
+  }
+  html += '</tbody></table></div></div>';
+  setTimeout(() => { const s = $('#f-cat'); if(s) s.onchange = e => { S.docCat = e.target.value; render(); }; });
+  return html;
+};
+
+VIEWS.review = async () => {
+  const r = await api('/api/review');
+  let html = `<div class="panel"><h2>Needs review</h2><p class="muted small" style="margin-top:-6px">New files that haven't been catalogued yet, and entries that were read from hard-to-read scans. Open one, check it against the document, and save to clear the flag.</p>`;
+  if(!r.documents.length && !r.records.length) return html + '<div class="empty">All caught up.</div></div>';
+  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span></div>`).join('');
+  if(r.records.length) html += '<h3>Entries</h3>' + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.id)}</b> <span class="muted small">${fdate(x.date||x.start_date||'')}</span></div>`).join('');
+  return html + '</div>';
+};
+
+VIEWS.financial = async (sum) => {
+  const fin = await load('financial','/api/financial');
+  const f = sum.financial;
+  const byPayee = {};
+  for(const r of fin){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,paid:0,owed:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].paid += r.paid||0; byPayee[k].owed += r.owed||0; byPayee[k].n++; }
+  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total charged</span></div><div class="tile"><b>${money(f.paid)}</b><span>paid / adjusted by insurance & others</span></div><div class="tile"><b>${money(f.owed)}</b><span>patient balance shown on statements</span></div><div class="tile"><b>${fin.length}</b><span>bills, quotes & statements</span></div></div>`;
+  html += `<div class="panel"><h2>By provider</h2><div class="tablewrap"><table><thead><tr><th data-sort>Payee</th><th data-sort>Items</th><th data-sort>Charged</th><th data-sort>Paid / adjusted</th><th data-sort>Balance shown</th></tr></thead><tbody>` +
+    Object.entries(byPayee).sort((a,b)=>b[1].charged-a[1].charged).map(([k,v]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${v.n}</td><td class="num" data-v="${v.charged}">${money(v.charged)}</td><td class="num" data-v="${v.paid}">${money(v.paid)}</td><td class="num" data-v="${v.owed}">${money(v.owed)}</td></tr>`).join('') + '</tbody></table></div></div>';
+  html += recordTable('financial', fin, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Charged'],['paid','Paid / adj.'],['owed','Balance']], 'Every bill, quote and statement', {note:'Each line opens the full record and the original statement. Quotes are estimates, not charges.'});
+  return html;
+};
+
+// ---------- search ----------
+async function renderSearch(q){
+  const r = await api('/api/search?q=' + encodeURIComponent(q));
+  const m = $('#main');
+  let html = `<div class="panel"><h2>Results for “${esc(q)}”</h2>`;
+  if(r.records.length) html += `<h3>Entries (${r.records.length})</h3>` + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</b> <span class="muted small">${fdate(x.date||x.start_date||x.first_noted||'')} ${x.facility?'· '+esc(x.facility):''}</span>${x.result||x.summary||x.notes?`<div class="small muted">${esc((x.result||x.summary||x.notes).slice(0,200))}</div>`:''}</div>`).join('');
+  if(r.documents.length) html += `<h3>Inside documents (${r.documents.length})</h3>` + r.documents.map(d => `<div class="hit" data-doc="${d.id}" data-q="${esc(q)}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} ${d.facility?'· '+esc(d.facility):''}</span><div class="small">${esc(d.snippet).replace(/\[\[/g,'<mark>').replace(/\]\]/g,'</mark>')}</div></div>`).join('');
+  if(!r.records.length && !r.documents.length) html += '<div class="empty">Nothing found. Try a shorter word.</div>';
+  m.innerHTML = html + '</div>';
+  bind(m);
+}
+
+// ---------- dialogs ----------
+const dlg = $('#dlg');
+$('#dlg-close').onclick = () => dlg.close();
+dlg.addEventListener('click', e => { if(e.target === dlg) dlg.close(); });
+function show(title, body){ $('#dlg-title').innerHTML = title; $('#dlg-body').innerHTML = body; if(!dlg.open) dlg.showModal(); bind($('#dlg-body')); }
+
+async function openRecord(kind, id){
+  const r = await api(`/api/${kind}/${encodeURIComponent(id)}`);
+  const docs = await load('documents','/api/documents');
+  const byId = Object.fromEntries(docs.map(d => [d.id,d]));
+  const kv = FIELDS[kind].filter(f => r[f] != null && r[f] !== '').map(f => {
+    let v = r[f];
+    if(f.includes('date') || f==='first_noted') v = fdate(v);
+    else if(['charged','paid','adjusted','owed'].includes(f)) v = money(v);
+    else if(f==='abnormal') v = v ? 'Yes' : 'No';
+    else if(f==='encounter_id') return `<div>Visit</div><div><a href="#" data-open="encounters|${esc(v)}">open the visit</a></div>`;
+    return `<div>${f.replace(/_/g,' ')}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
+  }).join('');
+  const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
+  show(`<h2>${esc(r.name||r.reason||r.analyte||r.description||r.substance||r.payee||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
+    `<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button></div>`);
+  $('#ed').onclick = () => editRecord(kind, r);
+}
+
+function editRecord(kind, r){
+  const isNew = !r; r = r || {};
+  const inputs = FIELDS[kind].map(f => {
+    const v = r[f] ?? '';
+    const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','paid','adjusted','owed','num'].includes(f) ? 'number" step="any' : 'text';
+    if(f==='abnormal') return `<label>Abnormal<select name="${f}"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes</option></select></label>`;
+    if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
+    if(LONG.has(f)) return `<label class="wide">${f.replace(/_/g,' ')}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
+    return `<label>${f.replace(/_/g,' ')}<input name="${f}" type="${type}" value="${esc(v)}"></label>`;
+  }).join('');
+  show(`<h2>${isNew?'Add':'Edit'} ${KIND_LABEL[kind].toLowerCase()}</h2>`,
+    `<form class="edit" id="ef">${inputs}${r.needs_review?'<label class="wide" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" name="clear_review" checked> Mark as reviewed</label>':''}</form><div class="row-actions">${isNew?'':'<button class="btn danger" id="del">Delete</button>'}<button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div><p class="muted small" id="msg"></p>`);
+  $('#cancel').onclick = () => isNew ? dlg.close() : openRecord(kind, r.id);
+  $('#save').onclick = async () => {
+    const fd = new FormData($('#ef')); const body = {};
+    for(const f of FIELDS[kind]) body[f] = fd.get(f);
+    if(fd.get('clear_review')) body.needs_review = 0;
+    try{
+      const out = isNew ? await api(`/api/${kind}`, {method:'POST', body:JSON.stringify(body)}) : await api(`/api/${kind}/${encodeURIComponent(r.id)}`, {method:'PUT', body:JSON.stringify(body)});
+      invalidate(); await render(); openRecord(kind, out.id);
+    }catch(e){ $('#msg').textContent = e.message; }
+  };
+  if(!isNew) $('#del').onclick = async () => { if(!confirm('Delete this entry? The source document is not affected.')) return; await api(`/api/${kind}/${encodeURIComponent(r.id)}`, {method:'DELETE'}); dlg.close(); invalidate(); render(); };
+}
+
+async function openDoc(id){
+  const d = await api('/api/documents/' + id);
+  const viewable = d.has_file && ['.pdf','.jpg','.jpeg','.png','.txt'].includes(d.ext);
+  const audio = d.has_file && d.ext === '.wav';
+  const linked = d.linked.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> ${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</div>`).join('');
+  show(`<h2>${esc(d.title)}</h2><div class="muted small">${fdate(d.doc_date)}${d.facility?' · '+esc(d.facility):''} · ${esc(d.category||'')}</div>`,
+    `<div class="docview"><div>${viewable?`<iframe src="/file/${d.id}" title="document"></iframe>`: audio?`<audio controls src="/file/${d.id}" style="width:100%"></audio>`:''}
+      ${d.text?`<h3>${viewable?'Text (searchable)':'Text'}${d.ocr_pages.length?' <span class="tag">read from scan, may contain errors</span>':''}</h3><div class="doctext">${esc(d.text).replace(/\f/g,'\n\n──── next page ────\n\n')}</div>`:''}
+      ${!d.has_file?'<p class="muted">The file itself is not on the dashboard (too large, or a disc image). It is in the records folder.</p>':''}</div>
+      <div>${d.summary?`<p>${esc(d.summary)}</p>`:''}<div class="kv"><div>File</div><div class="small">${esc(d.organized_path||d.path)}</div><div>Original</div><div class="small">${esc(d.orig_path||'')}</div><div>Pages</div><div>${d.pages??''}</div></div>
+      ${d.has_file?`<p><a class="btn" href="/file/${d.id}?download=1">Download</a> <a class="btn" href="/file/${d.id}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
+      <h3>Entries from this document</h3>${linked||'<p class="muted small">None.</p>'}
+      <h3>Details</h3><form class="edit" id="df" style="grid-template-columns:1fr">
+        <label>Title<input name="title" value="${esc(d.title||'')}"></label><label>Date<input name="doc_date" value="${esc(d.doc_date||'')}" placeholder="YYYY-MM-DD"></label>
+        <label>Kind<select name="category">${['hospital','office','imaging','labs','procedures','tests','eye','dental','medications','financial','legal','other'].map(c=>`<option ${c===d.category?'selected':''}>${c}</option>`).join('')}</select></label>
+        <label>From<input name="facility" value="${esc(d.facility||'')}"></label>
+        <label>Summary<textarea name="summary" rows="3">${esc(d.summary||'')}</textarea></label></form>
+      <div class="row-actions"><button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+  $('#dsave').onclick = async () => {
+    const fd = new FormData($('#df')); const body = Object.fromEntries(fd.entries()); body.needs_review = 0;
+    try{ await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify(body)}); invalidate(); $('#dmsg').textContent = 'Saved.'; render(); }catch(e){ $('#dmsg').textContent = e.message; }
+  };
+}
+
+const start = location.hash.slice(1);
+if(TABS.some(t => t[0]===start)) S.tab = start;
+render();
+</script>
+</body>
+</html>
