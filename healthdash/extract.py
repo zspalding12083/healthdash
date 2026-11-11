@@ -68,7 +68,8 @@ def ocr_image(path):
 
 def office_text(path):
     with tempfile.TemporaryDirectory() as tmp:
-        _run(['soffice', '--headless', '--convert-to', 'txt:Text', '--outdir', tmp, path], timeout=120)
+        from .doctor import find_soffice
+        _run([find_soffice() or 'soffice', '--headless', '--convert-to', 'txt:Text', '--outdir', tmp, path], timeout=120)
         out = [f for f in os.listdir(tmp) if f.endswith('.txt')]
         if not out:
             return ''

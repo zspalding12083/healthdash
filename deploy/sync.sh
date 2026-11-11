@@ -42,7 +42,7 @@ backup() {
     curl -fsS --max-time 120 -o "$out" "$URL/api/backup"
     chmod 600 "$out"
     python3 -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('select count(*) from documents')" "$out"
-    ls -1t backups/health-*.db | tail -n +$((KEEP + 1)) | xargs -r rm --
+    ls -1t backups/health-*.db | tail -n +$((KEEP + 1)) | while IFS= read -r old; do rm -- "$old"; done
     echo "backed up to $out ($(du -h "$out" | cut -f1))"
     # files added from the dashboard only exist on the server until copied here
     mkdir -p backups/uploads && chmod 700 backups/uploads

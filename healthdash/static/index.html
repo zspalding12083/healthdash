@@ -122,6 +122,25 @@ form.edit .wide{grid-column:1/-1}
 .drop div{border:3px dashed #fff;border-radius:18px;padding:40px 60px;text-align:center}
 .ask-box{background:var(--bg);border-left:4px solid var(--warn,#c80);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:14px}
 .ask-box ul{margin:6px 0 0 18px;padding:0}
+.login{max-width:360px;margin:60px auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.login h2{margin:0 0 4px}
+.login form{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.login label{display:flex;flex-direction:column;font-size:12px;color:var(--ink2);gap:3px}
+.login input{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:15px}
+.login .err{color:var(--bad);font-size:13px;min-height:1em}
+footer.disc{max-width:1200px;margin:24px auto 40px;padding:0 16px;font-size:12px;color:var(--ink3)}
+.acct-list{display:flex;flex-direction:column;gap:6px;margin:8px 0 16px}
+.acct-list div{display:flex;align-items:center;gap:8px;justify-content:space-between;border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.review-nav{font-size:13px;color:var(--ink2);margin-bottom:8px}
+.mini{display:flex;align-items:center;gap:6px}
+.mini svg{display:block}
+.labchart{position:relative}
+.labchart svg{width:100%;height:auto;display:block}
+.labchart .ax{font-size:11px;fill:var(--ink3)}
+.labchart .pt{cursor:default}
+.labchart .tip{position:absolute;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.15);pointer-events:none}
+details.panel summary{cursor:pointer;padding:2px 0}
+details.panel[open] summary{margin-bottom:10px}
 @media (max-width:760px){
   .docview{grid-template-columns:1fr}
   .medrow,.axis{grid-template-columns:110px 1fr}
@@ -138,10 +157,12 @@ form.edit .wide{grid-column:1/-1}
     <button class="btn primary" id="upl" title="Add PDFs or photos of records">＋ Add records</button>
     <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,application/pdf,image/*" hidden>
     <button class="btn" id="theme" title="Light / dark">◐</button>
+    <button class="btn" id="acct" hidden title="Accounts and sign out"></button>
   </div>
   <nav id="tabs"></nav>
 </header>
 <main id="main"><div class="empty">Loading…</div></main>
+<footer class="disc">Personal records, not medical advice. Sorting, scanned text and lab values are read automatically and can be wrong; the original document is the record. Provided as is, with no warranty or liability.</footer>
 
 <div class="tray" id="tray" aria-live="polite"></div>
 <div class="drop" id="drop"><div>Drop PDFs or photos to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
@@ -179,6 +200,7 @@ function datePlus(d){ return d ? (d.length===4? d+'-07-01' : d.length===7? d+'-1
 async function api(path, opts={}){
   const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
   const j = await r.json().catch(() => ({}));
+  if(r.status === 401){ showLogin(false); throw new Error('please sign in'); }
   if(!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
@@ -350,35 +372,157 @@ VIEWS.conditions = async () => recordTable('conditions', await load('conditions'
 VIEWS.providers = async () => recordTable('providers', await load('providers','/api/providers'),
   [['name','Name'],['specialty','Specialty'],['facility','Practice / hospital'],['phone','Phone','hide-sm']], 'Doctors and care team');
 
+// ---------- lab trends ----------
+const LAB_GROUPS = [
+  ['Blood counts', /^(wbc|rbc|hemoglobin|hematocrit|platelets|mcv|mch|mchc|rdw|mpv|neutro|lympho|mono|eosino|baso|band|immature)/i],
+  ['Kidney & electrolytes', /^(sodium|potassium|chloride|co2|anion|bun|creatinine|egfr|gfr|calcium|magnesium|phosph|osmol)/i],
+  ['Liver & protein', /^(alt|ast|alkaline|bilirubin|albumin|total protein|a\/g|globulin|ggt|lipase|amylase)/i],
+  ['Blood sugar', /^(glucose|hemoglobin a1c|a1c)/i],
+  ['Clotting', /^(inr|prothrombin|aptt|ptt|fibrinogen|d-dimer)/i],
+  ['Heart', /^(troponin|bnp|nt-probnp|ck)/i],
+  ['Cholesterol', /^(cholesterol|ldl|hdl|triglycer)/i],
+];
+function labGroup(name){ const g = LAB_GROUPS.find(([, rx]) => rx.test(name)); return g ? g[0] : 'Other tests'; }
+function refRange(s){ const m = (s||'').match(/(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/); return m ? [+m[1], +m[2]] : null; }
+const tOf = d => new Date(datePlus(d)).getTime();
+const YEAR = 365.25 * 864e5;
+
+function labTests(labs){
+  const by = {};
+  for(const l of labs){ (by[l.analyte] ||= []).push(l); }
+  return Object.entries(by).map(([name, rows]) => {
+    rows.sort((a, b) => (a.date||'').localeCompare(b.date||''));
+    const last = rows[rows.length-1];
+    // one point per day (the day's last value) for trends and "previous"
+    const days = []; for(const r of rows){ if(r.num == null) continue; if(days.length && days[days.length-1].date === r.date) days[days.length-1] = r; else days.push(r); }
+    const prev = days.length > 1 ? days[days.length-2] : null;
+    return {name, rows, last, days, prev, group: labGroup(name), out: !!last.flag};
+  });
+}
+function changeCell(t){
+  if(!t.prev || t.last.num == null) return '<span class="muted">–</span>';
+  const d = t.last.num - t.prev.num;
+  const arrow = Math.abs(d) < 1e-9 ? '→' : d > 0 ? '↑' : '↓';
+  return `${arrow} <span class="muted small">from ${esc(bare(t.prev))} (${fdate(t.prev.date)})</span>`;
+}
+function bare(r){  // the value without its unit (units are shown once, separately)
+  let v = String(r.value ?? ''); const u = r.unit || '';
+  if(u && v.toLowerCase().endsWith(u.toLowerCase())) v = v.slice(0, -u.length).trim();
+  return v;
+}
+function flagTag(f){ return f ? ` <span class="tag bad" title="${f==='H'?'High':f==='L'?'Low':'Flagged'}">${esc(f)}${f==='H'?' high':f==='L'?' low':''}</span>` : ''; }
+
+// small date-scaled trend; a gap of over a year breaks the line
+function miniTrend(t){
+  const pts = t.days; if(pts.length < 2) return '<span class="muted small">one result</span>';
+  const W = 150, H = 34, P = 4;
+  const xs = pts.map(p => tOf(p.date)), ys = pts.map(p => p.num);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const rr = refRange(t.last.ref_range); if(rr){ lo = Math.min(lo, rr[0]); hi = Math.max(hi, rr[1]); }
+  if(hi === lo){ hi += 1; lo -= 1; }
+  // evenly spaced results (dates are in the full chart); a dashed mark shows a gap of over a year
+  const n = pts.length, X = i => P + i/(n-1)*(W-2*P), Y = v => H-P - (v-lo)/(hi-lo)*(H-2*P);
+  let d = '', gaps = '';
+  pts.forEach((p, i) => {
+    const gap = i && xs[i]-xs[i-1] > YEAR;
+    if(gap){ const gx = ((X(i-1)+X(i))/2).toFixed(1); gaps += `<line x1="${gx}" x2="${gx}" y1="1" y2="${H-1}" stroke="var(--ink3)" stroke-dasharray="2 2"/>`; }
+    d += `${i && !gap ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.num).toFixed(1)}`;
+  });
+  const band = rr ? `<rect x="0" y="${Y(rr[1]).toFixed(1)}" width="${W}" height="${Math.max(1, Y(rr[0])-Y(rr[1])).toFixed(1)}" fill="var(--ok-soft)"/>` : '';
+  const dots = pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.num).toFixed(1)}" r="2.5" fill="${p.flag?'var(--bad)':'var(--accent)'}"/>`).join('');
+  const y0 = pts[0].date.slice(0,4), y1 = t.last.date.slice(0,4);
+  return `<div class="mini"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${band}${gaps}<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${dots}</svg><span class="muted small">${y0===y1?y0:y0+'–'+y1}</span></div>`;
+}
+
 VIEWS.labs = async () => {
-  const series = await load('labseries','/api/labs/series');
   const labs = await load('labs','/api/labs');
-  const names = Object.keys(series).sort();
-  let html = `<div class="panel"><h2>Lab trends</h2><p class="muted small" style="margin-top:-6px">Every lab value that was measured more than once. The shaded band is the normal range; red dots were flagged high or low.</p><div class="cards">`;
-  for(const n of names){
-    const pts = series[n]; const last = pts[pts.length-1];
-    html += `<div class="card"><div class="t">${esc(n)} <span class="muted small">${esc(last.unit||'')}</span></div>
-      <div class="small muted">Latest ${esc(last.value)} on ${fdate(last.date)}${last.flag?` <span class="tag bad">${esc(last.flag)}</span>`:''}</div>${spark(pts)}</div>`;
+  if(!labs.length) return '<div class="panel"><h2>Lab trends</h2><div class="empty">No lab results yet.</div></div>';
+  const tests = labTests(labs);
+  const q = (S.labQ||'').toLowerCase(), onlyOut = !!S.labOut;
+  const shown = tests.filter(t => (!q || t.name.toLowerCase().includes(q)) && (!onlyOut || t.out));
+  const outNow = tests.filter(t => t.out).sort((a, b) => (b.last.date||'').localeCompare(a.last.date||''));
+  const row = t => `<tr class="click" data-lab="${esc(t.name)}"><td><b>${esc(t.name)}</b></td>
+    <td class="nowrap"><b>${esc(bare(t.last))}</b> <span class="muted small">${esc(t.last.unit||'')}</span>${flagTag(t.last.flag)}<div class="muted small">${fdate(t.last.date)}</div></td>
+    <td class="hide-sm muted">${esc(t.last.ref_range||'')}</td><td class="hide-sm">${changeCell(t)}</td><td class="hide-sm">${miniTrend(t)}</td>
+    <td class="num hide-sm">${t.rows.length}</td></tr>`;
+  const head = '<thead><tr><th>Test</th><th>Latest</th><th class="hide-sm">Normal range</th><th class="hide-sm">Since last time</th><th class="hide-sm">History</th><th class="hide-sm">Results</th></tr></thead>';
+  let html = `<div class="panel"><h2>Lab trends</h2><p class="muted small" style="margin-top:-6px">Latest result for every test, its normal range and how it changed. Click a test to see every value on a chart. High/low flags are the lab's own.</p>
+    <div class="filters"><input class="f" id="lab-q" type="search" placeholder="Find a test…" value="${esc(S.labQ||'')}"><label class="small"><input type="checkbox" id="lab-out" ${onlyOut?'checked':''}> Only out of range</label><span class="muted small">${shown.length} of ${tests.length} tests</span></div></div>`;
+  if(outNow.length && !q && !onlyOut){
+    html += `<div class="panel"><h2>Out of range at the last test (${outNow.length})</h2><div class="tablewrap"><table>${head}<tbody>${outNow.map(row).join('')}</tbody></table></div></div>`;
   }
-  html += names.length ? '</div></div>' : '</div><div class="empty">No repeated lab values yet.</div></div>';
-  html += recordTable('labs', labs, [['date','Date'],['panel','Panel','hide-sm'],['analyte','Test'],['value','Result'],['unit','Unit','hide-sm'],['ref_range','Normal range','hide-sm'],['flag','Flag'],['facility','Where','hide-sm']], 'All lab results');
+  for(const [g] of [...LAB_GROUPS, ['Other tests']]){
+    const ts = shown.filter(t => t.group === g).sort((a, b) => a.name.localeCompare(b.name));
+    if(!ts.length) continue;
+    html += `<div class="panel"><h2>${esc(g)}</h2><div class="tablewrap"><table>${head}<tbody>${ts.map(row).join('')}</tbody></table></div></div>`;
+  }
+  if(!shown.length) html += '<div class="panel"><div class="empty">No tests match.</div></div>';
+  html += `<details class="panel"><summary><b>All ${labs.length} lab results</b> <span class="muted small">one row per value, editable</span></summary>` +
+    recordTable('labs', labs, [['date','Date'],['panel','Panel','hide-sm'],['analyte','Test'],['value','Result'],['unit','Unit','hide-sm'],['ref_range','Normal range','hide-sm'],['flag','Flag'],['facility','Where','hide-sm']], 'Every value') + '</details>';
+  setTimeout(() => {
+    const qi = $('#lab-q'); if(qi){ qi.oninput = () => { S.labQ = qi.value; clearTimeout(qi._t); qi._t = setTimeout(async () => { await render(); const n = $('#lab-q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); }; }
+    const oc = $('#lab-out'); if(oc) oc.onchange = () => { S.labOut = oc.checked; render(); };
+    document.querySelectorAll('[data-lab]').forEach(tr => tr.onclick = () => openLab(tr.dataset.lab, tests));
+  });
   return html;
 };
-function spark(pts){
-  const W=260,H=70,P=6;
-  const xs = pts.map(p => new Date(datePlus(p.date)).getTime());
-  const ys = pts.map(p => p.num);
-  let lo = Math.min(...ys), hi = Math.max(...ys);
-  const rr = (pts[pts.length-1].ref_range||'').match(/(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/);
-  let rl, rh; if(rr){ rl=+rr[1]; rh=+rr[2]; lo=Math.min(lo,rl); hi=Math.max(hi,rh); }
-  if(hi===lo){ hi+=1; lo-=1; }
-  const x0=Math.min(...xs), x1=Math.max(...xs)||x0+1;
-  const X = t => P + (x1===x0 ? (W-2*P)/2 : (t-x0)/(x1-x0)*(W-2*P));
-  const Y = v => H-P - (v-lo)/(hi-lo)*(H-2*P);
-  const band = rr ? `<rect x="0" y="${Y(rh)}" width="${W}" height="${Math.max(1,Y(rl)-Y(rh))}" fill="var(--ok-soft)"/>` : '';
-  const line = pts.map((p,i) => `${i?'L':'M'}${X(xs[i]).toFixed(1)},${Y(p.num).toFixed(1)}`).join('');
-  const dots = pts.map((p,i) => `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.num).toFixed(1)}" r="3" fill="${p.flag?'var(--bad)':'var(--accent)'}"><title>${fdate(p.date)}: ${esc(p.value)} ${esc(p.unit||'')}</title></circle>`).join('');
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${band}<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>${dots}</svg>`;
+
+// full chart for one test: date axis, value axis, normal band, a point per result, hover details
+function niceTicks(lo, hi, n=5){
+  const span = hi - lo || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m*mag).find(s => s >= step0) || 10*mag;
+  const out = []; for(let v = Math.ceil(lo/step)*step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function labChart(name, pts, days, rr){
+  const W = 720, H = 280, L = 52, R = 16, T = 14, B = 34;
+  const xs = pts.map(p => tOf(p.date)); let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  if(x1 - x0 < 6*864e5){ x0 -= 3*864e5; x1 += 3*864e5; }
+  let lo = Math.min(...pts.map(p => p.num)), hi = Math.max(...pts.map(p => p.num));
+  if(rr){ lo = Math.min(lo, rr[0]); hi = Math.max(hi, rr[1]); }
+  const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
+  const X = v => L + (v-x0)/(x1-x0)*(W-L-R), Y = v => T + (hi-v)/(hi-lo)*(H-T-B);
+  const yt = niceTicks(lo, hi);
+  const spanD = (x1-x0)/864e5, xt = [], d0 = new Date(x0), d1 = new Date(x1);
+  if(spanD > 730){ const step = Math.ceil(spanD/365/8); for(let y = d0.getFullYear()+1; y <= d1.getFullYear(); y += step) xt.push([new Date(y,0,1).getTime(), String(y)]); }
+  else if(spanD > 45){ const c = new Date(d0.getFullYear(), d0.getMonth()+1, 1), step = Math.max(1, Math.ceil(spanD/30/7)); while(c.getTime() <= x1){ xt.push([c.getTime(), MON[c.getMonth()] + (c.getMonth()===0 || !xt.length ? ' '+c.getFullYear() : '')]); c.setMonth(c.getMonth()+step); } }
+  else { const step = Math.max(1, Math.ceil(spanD/7)); const c = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()+1); while(c.getTime() <= x1){ xt.push([c.getTime(), c.getDate()+' '+MON[c.getMonth()]]); c.setDate(c.getDate()+step); } }
+  const grid = yt.map(v => `<line x1="${L}" x2="${W-R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line2)"/><text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" class="ax">${v}</text>`).join('');
+  const xl = xt.map(([v, l]) => `<line x1="${X(v).toFixed(1)}" x2="${X(v).toFixed(1)}" y1="${H-B}" y2="${H-B+4}" stroke="var(--ink3)"/><text x="${X(v).toFixed(1)}" y="${H-B+18}" text-anchor="middle" class="ax">${esc(l)}</text>`).join('');
+  const band = rr ? `<rect x="${L}" y="${Y(rr[1]).toFixed(1)}" width="${W-L-R}" height="${Math.max(1, Y(rr[0])-Y(rr[1])).toFixed(1)}" fill="var(--ok-soft)"/><text x="${W-R-4}" y="${(Y(rr[1])+12).toFixed(1)}" text-anchor="end" class="ax">normal ${rr[0]}–${rr[1]}</text>` : '';
+  let d = ''; days.forEach((p, i) => { const xv = tOf(p.date); d += `${i && xv - tOf(days[i-1].date) <= YEAR ? 'L' : 'M'}${X(xv).toFixed(1)},${Y(p.num).toFixed(1)}`; });
+  const dots = pts.map((p, i) => `<g class="pt" data-i="${i}"><circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.num).toFixed(1)}" r="12" fill="transparent"/><circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.num).toFixed(1)}" r="4.5" fill="${p.flag?'var(--bad)':'var(--accent)'}" stroke="var(--panel)" stroke-width="2"/></g>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(name)} over time">${band}${grid}<line x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}" stroke="var(--ink3)"/>${xl}<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${dots}</svg>`;
+}
+function openLab(name, tests){
+  const t = tests.find(x => x.name === name); if(!t) return;
+  const pts = t.rows.filter(r => r.num != null);
+  const rr = refRange(t.last.ref_range);
+  // stretches of results with no gap over 6 months (e.g. one hospital stay), newest first
+  const eps = []; pts.forEach((p, i) => { if(!i || tOf(p.date) - tOf(pts[i-1].date) > YEAR/2) eps.push([]); eps[eps.length-1].push(p); });
+  const label = e => { const a = fdate(e[0].date), b = fdate(e[e.length-1].date); return a === b ? a : `${a} – ${b}`; };
+  const rows = [...t.rows].reverse().map(r => `<tr><td class="nowrap">${fdate(r.date)}</td><td><b>${esc(bare(r))}</b> <span class="muted small">${esc(r.unit||'')}</span>${flagTag(r.flag)}</td><td class="muted hide-sm">${esc(r.ref_range||'')}</td><td class="hide-sm">${esc(r.facility||'')}</td><td>${(r.docs||[]).slice(0,1).map(id => `<a href="#" data-doc="${id}">source</a>`).join('')}</td></tr>`).join('');
+  const pick = eps.length > 1 ? `<div class="filters" id="eps">${[...eps].reverse().map((e, i) => `<button class="btn ${i?'':'primary'}" data-ep="${eps.length-1-i}">${esc(label(e))}</button>`).join('')}<button class="btn" data-ep="all">All years</button></div>` : '';
+  show(`<h2>${esc(name)}</h2><div class="muted small">${t.rows.length} result${t.rows.length===1?'':'s'}, ${fdate(t.rows[0].date)} to ${fdate(t.last.date)}</div>`,
+    `${pts.length ? pick + '<div class="labchart" id="lc"></div><div class="tip" id="labtip" hidden></div>' : '<p class="muted">No numbers to chart (results are words, like "Negative").</p>'}
+     ${pts.length ? `<p class="muted small">${t.last.unit?esc(t.last.unit)+'. ':''}Shaded: normal range from the latest result (labs differ slightly). Red points were flagged high or low by the lab.</p>` : ''}
+     <h3>Every result</h3><div class="tablewrap"><table><thead><tr><th>Date</th><th>Result</th><th class="hide-sm">Normal range</th><th class="hide-sm">Where</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  if(!pts.length) return;
+  const draw = ep => {
+    const sub = ep === 'all' ? pts : eps[+ep];
+    const subDays = t.days.filter(d => sub.some(p => p.date === d.date));
+    const box = $('#lc'); box.innerHTML = labChart(name, sub, subDays, rr); box.appendChild($('#labtip'));
+    const tip = $('#labtip');
+    box.querySelectorAll('.pt').forEach(g => {
+      g.onmouseenter = () => { const p = sub[+g.dataset.i]; const c = g.querySelector('circle').getBoundingClientRect(), bb = box.getBoundingClientRect();
+        tip.innerHTML = `<b>${esc(bare(p))}</b> ${esc(p.unit||'')}${p.flag?` · ${p.flag==='H'?'high':p.flag==='L'?'low':'flagged'}`:''}<br><span class="muted">${fdate(p.date)}${p.facility?' · '+esc(p.facility):''}</span>`;
+        tip.hidden = false; tip.style.left = Math.min(bb.width-180, Math.max(0, c.left-bb.left-80)) + 'px'; tip.style.top = Math.max(0, c.top-bb.top-52) + 'px'; };
+      g.onmouseleave = () => { tip.hidden = true; };
+    });
+    document.querySelectorAll('#eps [data-ep]').forEach(b => b.classList.toggle('primary', b.dataset.ep === String(ep)));
+  };
+  document.querySelectorAll('#eps [data-ep]').forEach(b => b.onclick = () => draw(b.dataset.ep));
+  draw(eps.length > 1 ? eps.length - 1 : 'all');
 }
 
 VIEWS.documents = async () => {
@@ -473,7 +617,9 @@ function editRecord(kind, r){
     if(fd.get('clear_review')) body.needs_review = 0;
     try{
       const out = isNew ? await api(`/api/${kind}`, {method:'POST', body:JSON.stringify(body)}) : await api(`/api/${kind}/${encodeURIComponent(r.id)}`, {method:'PUT', body:JSON.stringify(body)});
-      invalidate(); await render(); openRecord(kind, out.id);
+      invalidate();
+      if(r && r.needs_review && body.needs_review === 0) return nextReview({rec:kind+'|'+r.id});
+      await render(); openRecord(kind, out.id);
     }catch(e){ $('#msg').textContent = e.message; }
   };
   if(!isNew) $('#del').onclick = async () => { if(!confirm('Delete this entry? The source document is not affected.')) return; await api(`/api/${kind}/${encodeURIComponent(r.id)}`, {method:'DELETE'}); dlg.close(); invalidate(); render(); };
@@ -511,13 +657,31 @@ async function openDoc(id){
   };
   $('#dsave').onclick = async () => {
     const fd = new FormData($('#df')); const body = Object.fromEntries(fd.entries()); body.needs_review = 0; body.review_note = null;
-    try{ await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify(body)}); invalidate(); $('#dmsg').textContent = 'Saved.'; render(); }catch(e){ $('#dmsg').textContent = e.message; }
+    try{
+      await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify(body)}); invalidate();
+      if(d.needs_review) return nextReview({doc:id});
+      $('#dmsg').textContent = 'Saved.'; render();
+    }catch(e){ $('#dmsg').textContent = e.message; }
   };
+}
+
+// ---------- review queue: one after another ----------
+async function nextReview(done){
+  const q = await api('/api/review');
+  const items = [...q.documents.filter(d => d.status !== 'processing').map(d => ({doc:d.id})),
+                 ...q.records.map(x => ({rec:x.kind+'|'+x.id}))]
+                .filter(x => x.doc !== done.doc && x.rec !== done.rec);
+  render();
+  if(!items.length){ show('<h2>All caught up</h2>', '<p>Nothing else needs review.</p><div class="row-actions"><button class="btn primary" id="rdone">OK</button></div>'); $('#rdone').onclick = () => dlg.close(); return; }
+  const n = items[0];
+  if(n.doc) await openDoc(n.doc); else { const [k, rid] = n.rec.split('|'); await openRecord(k, rid); }
+  const left = document.createElement('div'); left.className = 'review-nav';
+  left.textContent = `Reviewing: ${items.length} left. Saved the last one.`;
+  $('#dlg-body').prepend(left);
 }
 
 // ---------- adding records ----------
 $('#upl').onclick = () => HEALTH.can_read ? $('#uplf').click() : showSetupHelp();
-checkHealth();
 $('#uplf').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
 let dragN = 0;
 addEventListener('dragenter', e => { if([...(e.dataTransfer?.types||[])].includes('Files')){ dragN++; $('#drop').classList.add('on'); } });
@@ -597,9 +761,67 @@ async function watchUpload(id, t){
   t.status('Still reading. Check Needs review later.');
 }
 
-const start = location.hash.slice(1);
-if(TABS.some(t => t[0]===start)) S.tab = start;
-render();
+// ---------- sign in & accounts ----------
+let ME = null;
+function showLogin(setup, msg){
+  $('#tabs').innerHTML = ''; $('#acct').hidden = true; $('#upl').hidden = true; $('#q').hidden = true;
+  if(dlg.open) dlg.close();
+  $('#main').innerHTML = `<div class="login"><h2>${setup?'Create the first account':'Sign in'}</h2>
+    <div class="muted small">${setup?'Nobody has an account yet. The account you make here can add others; everyone has the same access.':'These are private health records.'}</div>
+    <form id="lf"><label>User name<input name="username" autocomplete="username" autocapitalize="none" required></label>
+    <label>Password<input name="password" type="password" autocomplete="${setup?'new-password':'current-password'}" required minlength="${setup?8:1}"></label>
+    ${setup?'<label>Password again<input name="password2" type="password" autocomplete="new-password" required></label>':''}
+    <div class="err" id="lerr">${esc(msg||'')}</div><button class="btn primary">${setup?'Create account':'Sign in'}</button></form></div>`;
+  $('#lf').onsubmit = async e => {
+    e.preventDefault();
+    const b = Object.fromEntries(new FormData(e.target).entries());
+    if(setup && b.password !== b.password2){ $('#lerr').textContent = "Passwords don't match."; return; }
+    const r = await fetch(setup ? '/api/setup' : '/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:b.username, password:b.password})});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok){ $('#lerr').textContent = j.error || 'Could not sign in.'; return; }
+    location.reload();
+  };
+  setTimeout(() => $('#lf input')?.focus());
+}
+async function openAccounts(){
+  const users = await api('/api/users');
+  show(`<h2>Accounts</h2><div class="muted small">Signed in as ${esc(ME)}. Everyone with an account can see and change everything, and manage accounts.</div>`,
+    `<div class="acct-list">${users.map(u => `<div><b>${esc(u.username)}</b><span><button class="btn" data-pw="${esc(u.username)}">Set password</button>
+      <button class="btn danger" data-rm="${esc(u.username)}" ${users.length<2?'disabled':''}>Remove</button></span></div>`).join('')}</div>
+    <h3>Add someone</h3><form class="edit" id="af"><label>User name<input name="username" autocapitalize="none" required></label>
+    <label>Password (8+ characters)<input name="password" type="password" autocomplete="new-password" required minlength="8"></label></form>
+    <div class="row-actions"><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>`);
+  $('#adduser').onclick = async () => {
+    const b = Object.fromEntries(new FormData($('#af')).entries());
+    try{ await api('/api/users', {method:'POST', body:JSON.stringify(b)}); openAccounts(); }catch(e){ $('#amsg').textContent = e.message; }
+  };
+  $('#dlg-body').querySelectorAll('[data-pw]').forEach(b => b.onclick = async () => {
+    const pw = prompt(`New password for ${b.dataset.pw} (8+ characters):`); if(!pw) return;
+    try{ await api(`/api/users/${encodeURIComponent(b.dataset.pw)}/password`, {method:'POST', body:JSON.stringify({password:pw})}); $('#amsg').textContent = 'Password changed.' + (b.dataset.pw===ME?'':' They will need to sign in again.'); }
+    catch(e){ $('#amsg').textContent = e.message; }
+  });
+  $('#dlg-body').querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+    if(!confirm(`Remove the account ${b.dataset.rm}? Their sign-in stops working; the records are not affected.`)) return;
+    try{ await api(`/api/users/${encodeURIComponent(b.dataset.rm)}`, {method:'DELETE'}); b.dataset.rm===ME ? location.reload() : openAccounts(); }
+    catch(e){ $('#amsg').textContent = e.message; }
+  });
+  $('#signout').onclick = async () => { await fetch('/api/logout', {method:'POST'}); location.reload(); };
+}
+$('#acct').onclick = () => openAccounts();
+
+async function boot(){
+  let a = {auth:false};
+  try{ a = await fetch('/api/auth').then(r => r.json()); }catch(e){}
+  if(a.auth && a.setup_needed) return showLogin(true);
+  if(a.auth && !a.user) return showLogin(false);
+  ME = a.user;
+  if(a.auth){ $('#acct').hidden = false; $('#acct').textContent = '👤 ' + a.user; }
+  const start = location.hash.slice(1);
+  if(TABS.some(t => t[0]===start)) S.tab = start;
+  checkHealth();
+  render();
+}
+boot();
 </script>
 </body>
 </html>

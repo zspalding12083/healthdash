@@ -1,5 +1,7 @@
 """healthdash command line.
 
+  python3 -m healthdash service install|status|uninstall [--port] [--lan] [--title]   (macOS)
+  python3 -m healthdash user list|add|passwd|remove [NAME] --db DB    (accounts, from a terminal)
   python3 -m healthdash check   [--ingest]                             (is everything installed?)
   python3 -m healthdash demo    [--port 9380]                          (made-up sample data)
   python3 -m healthdash serve   --db DB --port 9380 --files DIR --import-from INGEST_HOST_IP --title "Our Health"
@@ -8,6 +10,7 @@
 """
 
 import argparse
+import os
 import sys
 
 
@@ -22,6 +25,18 @@ def main(argv=None):
     s.add_argument('--import-from', action='append', default=['127.0.0.1'],
                    help='address allowed to import/upload (repeatable)')
     s.add_argument('--title', default=None, help='name shown at the top of the page')
+    s.add_argument('--host', default='0.0.0.0', help='127.0.0.1 = only this computer')
+
+    v = sub.add_parser('service', help='macOS: run the dashboard in the background, starting at login')
+    v.add_argument('action', choices=['install', 'status', 'uninstall'])
+    v.add_argument('--port', type=int, default=9380)
+    v.add_argument('--lan', action='store_true', help='let other devices on your network open it')
+    v.add_argument('--title', default=None)
+
+    u = sub.add_parser('user', help='manage sign-in accounts from a terminal')
+    u.add_argument('action', choices=['list', 'add', 'passwd', 'remove'])
+    u.add_argument('name', nargs='?')
+    u.add_argument('--db', required=True, help='the dashboard database file')
 
     c = sub.add_parser('check', help='check this machine has everything healthdash needs')
     c.add_argument('--ingest', action='store_true', help='check the records machine instead of the server')
@@ -44,7 +59,14 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == 'serve':
         from .server import serve
-        serve(a.db, a.port, a.files, a.import_from, title=a.title or config.TITLE)
+        serve(a.db, a.port, a.files, a.import_from, host=a.host, title=a.title or config.TITLE)
+    elif a.cmd == 'service':
+        from . import macos
+        if a.action == 'install':
+            return macos.install(a.port, a.lan, a.title)
+        return macos.status() if a.action == 'status' else macos.uninstall()
+    elif a.cmd == 'user':
+        return users_cli(a.action, a.name, a.db)
     elif a.cmd == 'check':
         from .doctor import main as check
         return check('ingest' if a.ingest else 'server')
@@ -57,6 +79,37 @@ def main(argv=None):
     elif a.cmd == 'organize':
         from .organize import organize
         organize(a.source, a.dest, apply=a.apply)
+
+
+
+def users_cli(action, name, db):
+    import getpass
+    from .auth import Auth
+    from .store import Store, ValidationError
+    if not os.path.exists(db):
+        raise SystemExit(f'no database at {db}')
+    store = Store(db)
+    auth = Auth(store)
+    try:
+        if action == 'list':
+            for u in auth.users():
+                print(u['username'], u['created'] or '')
+            return 0
+        if not name:
+            raise SystemExit('give a user name')
+        if action == 'remove':
+            auth.remove_user(name)
+        else:
+            pw = getpass.getpass(f'New password for {name}: ')
+            if pw != getpass.getpass('Again: '):
+                raise SystemExit("passwords don't match")
+            (auth.add_user if action == 'add' else auth.set_password)(name, pw)
+        print('done')
+        return 0
+    except ValidationError as e:
+        raise SystemExit(str(e))
+    finally:
+        store.close()
 
 
 if __name__ == '__main__':

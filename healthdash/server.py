@@ -1,7 +1,8 @@
 """HTTP server and JSON API. Python stdlib only.
 
-Read endpoints are open to the LAN. Import and file-upload endpoints (used by `ingest`)
-only accept requests from the addresses given with --import-from.
+Everything needs a signed-in account (see auth.py), except the sign-in page itself and the few
+endpoints the ingest/backup scripts use, which are allowed only from the addresses given with
+--import-from. Requests that change something must come from the dashboard's own page.
 """
 
 import html
@@ -9,6 +10,7 @@ import json
 import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from .store import KINDS, Store, ValidationError
@@ -23,7 +25,17 @@ FILE_TYPES = {'.pdf': 'application/pdf', '.tif': 'image/tiff', '.tiff': 'image/t
               '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
 
 
-def make_handler(store, files_dir, import_from, title='Health Records', uploads=None):
+# what the ingest machine's scripts call, without an account
+SCRIPT_ROUTES = {('GET', 'summary'), ('GET', 'health'), ('GET', 'files'), ('GET', 'backup'), ('GET', 'uploads'),
+                 ('POST', 'import'), ('POST', 'files')}
+# from this same computer only sending records in is allowed: a browser here also comes from
+# 127.0.0.1, and must not read anything without signing in
+LOOPBACK_ROUTES = {('GET', 'health'), ('GET', 'files'), ('POST', 'import'), ('POST', 'files')}
+LOOPBACK = {'127.0.0.1', '::1', '::ffff:127.0.0.1'}
+PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
+
+
+def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'healthdash'
 
@@ -65,11 +77,54 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _importer(self):
             return self.client_address[0] in import_from
 
+        def _token(self):
+            c = SimpleCookie()
+            try:
+                c.load(self.headers.get('Cookie') or '')
+            except Exception:  # noqa: BLE001 - a malformed cookie just means not signed in
+                return None
+            m = c.get('hd_session')
+            return m.value if m else None
+
+        def _user(self):
+            if not auth:
+                return 'local'
+            if not hasattr(self, '_who'):
+                self._who = auth.session_user(self._token())
+            return self._who
+
+        def _allowed(self, method, parts):
+            if not auth or self._user():
+                return True
+            if method in ('GET', 'HEAD') and (not parts or parts == ['index.html'] or parts[0] == 'static'):
+                return True
+            if parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in PUBLIC_API:
+                return True
+            if self._importer():
+                local = self.client_address[0] in LOOPBACK
+                routes = LOOPBACK_ROUTES if local else SCRIPT_ROUTES
+                if parts[0] == 'file' and method == 'GET' and not local:
+                    return True
+                if parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in routes:
+                    # GET /api/files is only the list of missing files, which holds no record data
+                    return not (local and method == 'GET' and parts[1:] != ['files', 'missing'] and parts[1] == 'files')
+            return False
+
+        def _same_origin(self):
+            origin = self.headers.get('Origin')
+            if not origin or origin == 'null':
+                return origin is None
+            return urlparse(origin).netloc == self.headers.get('Host')
+
         def _route(self, method):
             u = urlparse(self.path)
             parts = [p for p in u.path.split('/') if p]
             qs = {k: v[-1] for k, v in parse_qs(u.query).items()}
             try:
+                if method not in ('GET', 'HEAD') and not self._same_origin():
+                    return self._err(403, 'requests must come from the dashboard page')
+                if not self._allowed(method, parts):
+                    return self._err(401, 'please sign in')
                 return self._dispatch(method, parts, qs)
             except ValidationError as e:
                 return self._err(400, str(e))
@@ -102,6 +157,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if parts[0] != 'api':
                 return self._err(404, 'not found')
             p = parts[1:]
+            r = self._accounts(method, p)
+            if r is not False:
+                return r
             if method == 'GET':
                 if p == ['summary']:
                     return self._send(200, store.summary())
@@ -175,6 +233,48 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return self._send(200, {'deleted': store.delete(p[0], p[1])})
             return self._err(404, 'not found')
 
+        def _accounts(self, method, p):
+            """Sign-in and account routes; False when the path isn't one of them."""
+            if p == ['auth'] and method == 'GET':
+                return self._send(200, {'auth': bool(auth), 'user': self._user() if auth else None,
+                                        'setup_needed': bool(auth) and auth.count() == 0})
+            if not auth:
+                return False
+            ip = self.client_address[0]
+            if p == ['setup'] and method == 'POST':
+                body = self._json()
+                with store.lock:
+                    if auth.count():
+                        return self._err(400, 'an account already exists; sign in')
+                    name = auth.add_user(body.get('username'), body.get('password'))
+                token = auth.login(name, body.get('password'), ip)
+                return self._send(200, {'user': name}, extra={'Set-Cookie': auth.cookie(token)})
+            if p == ['login'] and method == 'POST':
+                body = self._json()
+                token = auth.login(body.get('username'), body.get('password'), ip)
+                return self._send(200, {'user': auth.session_user(token)}, extra={'Set-Cookie': auth.cookie(token)})
+            if p == ['logout'] and method == 'POST':
+                auth.logout(self._token())
+                return self._send(200, {'signed_out': True}, extra={'Set-Cookie': auth.cookie(None)})
+            if p[:1] != ['users']:
+                return False
+            if p == ['users'] and method == 'GET':
+                return self._send(200, auth.users())
+            if p == ['users'] and method == 'POST':
+                body = self._json()
+                return self._send(201, {'username': auth.add_user(body.get('username'), body.get('password'))})
+            if len(p) == 2 and method == 'DELETE':
+                auth.remove_user(p[1])
+                return self._send(200, {'removed': p[1]})
+            if len(p) == 3 and p[2] == 'password' and method == 'POST':
+                body = self._json()
+                auth.set_password(p[1], body.get('password'))
+                if p[1].lower() == self._user():  # changing your own: stay signed in here
+                    token = auth.login(p[1], body.get('password'), ip)
+                    return self._send(200, {'changed': True}, extra={'Set-Cookie': auth.cookie(token)})
+                return self._send(200, {'changed': True})
+            return self._err(404, 'not found')
+
         def _import(self, body):
             result = {}
             if body.get('documents'):
@@ -235,12 +335,14 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
     return Handler
 
 
-def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records'):
+def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', require_login=True):
     os.makedirs(files_dir, exist_ok=True)
     store = Store(db_path)
+    from .auth import Auth
     from .uploads import Uploads
     uploads = Uploads(store, files_dir)
-    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads))
+    auth = Auth(store) if require_login else None
+    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth))
     print(f'healthdash on http://{host}:{port}  db={db_path}  files={files_dir}', flush=True)
     try:
         httpd.serve_forever()

@@ -31,4 +31,4 @@ def demo(port, host='127.0.0.1'):
     load_sample(store)
     store.close()
     serve(db, port, os.path.join(tmp, 'files'), ['127.0.0.1'], host=host,
-          title='Health Records (demo)')
+          title='Health Records (demo)', require_login=False)

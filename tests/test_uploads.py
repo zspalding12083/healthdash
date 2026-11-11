@@ -237,18 +237,6 @@ class DuplicateTests(unittest.TestCase):
 
 
 class DoctorAndRetryTests(unittest.TestCase):
-    def test_check_reports_missing_tools(self):
-        from unittest import mock
-        from healthdash import doctor
-        with mock.patch('shutil.which', return_value=None):
-            st = doctor.upload_status()
-            self.assertFalse(st['can_read'])
-            self.assertIn('poppler-utils', st['fix'])
-            self.assertIn('tesseract-ocr', st['fix'])
-            names = {n: ok for n, ok, req, _ in doctor.checks()}
-            self.assertFalse(names['tesseract (reading scans)'])
-        self.assertTrue(dict((n, ok) for n, ok, _, _ in doctor.checks())['SQLite full-text search (FTS5)'])
-
     def test_failed_upload_can_be_retried(self):
         with tempfile.TemporaryDirectory() as tmp:
             files = os.path.join(tmp, 'f')

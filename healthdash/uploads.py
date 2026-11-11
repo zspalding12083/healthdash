@@ -33,8 +33,8 @@ def default_extract(path):
     ext = os.path.splitext(path)[1].lower()
     missing = tools_missing(ext)
     if missing:
-        raise RuntimeError(NO_TOOLS + ' (missing: ' + ', '.join(missing)
-                           + '). Install poppler-utils and tesseract-ocr on the server.')
+        raise RuntimeError(NO_TOOLS + ' (missing: ' + ', '.join(missing) + '). Install them with: '
+                           + (doctor.install_command(missing) or 'your package manager'))
     return extract_file(path)
 
 
