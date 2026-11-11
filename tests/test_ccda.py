@@ -58,6 +58,44 @@ class CcdaTests(unittest.TestCase):
         self.assertEqual((d['allergies'][0]['substance'], d['allergies'][0]['reaction']), ('Sampleillin', 'Hives'))
         self.assertIn('Diabetes follow-up', ccda.page(d))
 
+    def test_cerner_style_procedures_and_links_to_existing_entries(self):
+        doc = DOC.replace(b'<code code="99213"><originalText>Office Visit</originalText></code>', b'')
+        doc = doc.replace(b'<effectiveTime><low value="20200304100000-0500"/></effectiveTime>',
+                          b'<effectiveTime><low value="20200304100000-0500"/><high value="20200307120000-0500"/></effectiveTime>')
+        doc = doc.replace(b'</structuredBody>', b"""<component><section><code code="46240-8"/><title>Encounter</title>
+          <entry><encounter><code nullFlavor="UNK"><originalText>Inpatient</originalText></code>
+          <performer><assignedEntity><assignedPerson><name><given>Robin</given><family>Example</family><suffix>MD</suffix></name></assignedPerson></assignedEntity></performer></encounter></entry></section></component>
+          <component><section><code code="47519-4"/><title>Procedures</title><text><table><tbody>
+          <tr><td><content ID="pr1">Knee arthroscopy (None) 1</content></td><td>3/5/20</td></tr>
+          <tr><td><content ID="pr2">TONSILLECTOMY 6/1998</content></td><td/></tr></tbody></table></text>
+          <entry><procedure><code nullFlavor="UNK"><originalText><reference value="#pr1"/></originalText></code><statusCode code="completed"/></procedure></entry>
+          <entry><procedure><code nullFlavor="UNK"><originalText><reference value="#pr2"/></originalText></code><statusCode code="completed"/></procedure></entry>
+          </section></component></structuredBody>""")
+        d = ccda.parse(doc)
+        self.assertEqual((d['visit']['kind'], d['visit']['provider'], d['visit']['end_date']), ('Inpatient', 'Robin Example MD', '2020-03-07'))
+        self.assertEqual([(p['name'], p['date']) for p in d['procedures']],
+                         [('Knee arthroscopy', '2020-03-05'), ('TONSILLECTOMY', '1998-06')])
+        with tempfile.TemporaryDirectory() as tmp:
+            files = os.path.join(tmp, 'f'); os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            store.upsert_imported('encounters', [{'id': 'enc-old', 'date': '2020-03-04', 'type': 'Inpatient', 'reason': 'Knee'}])
+            store.upsert_imported('procedures', [{'id': 'proc-old', 'date': '1998-06', 'name': 'Tonsillectomy'}])
+            up = Uploads(store, files, recheck=0)
+            sha = up.add('summary.xml', doc)['id']
+            for _ in range(200):
+                if store.document(sha)['status'] != 'processing':
+                    break
+                time.sleep(0.05)
+            self.assertEqual(store.document(sha)['status'], 'done')
+            self.assertEqual([e['id'] for e in store.list('encounters')], ['enc-old'])      # linked, not doubled
+            page = [x for x in store.documents() if x['path'].startswith('Imported/')]
+            self.assertEqual([(x['title'], x['category']) for x in page], [('Hospital stay', 'hospital')])
+            self.assertIn(page[0]['id'], store.get('encounters', 'enc-old')['docs'])
+            self.assertIn(page[0]['id'], store.get('procedures', 'proc-old')['docs'])        # 1998-06 matched
+            self.assertEqual(sorted(p['name'] for p in store.list('procedures')), ['Knee arthroscopy', 'Tonsillectomy'])
+            self.assertNotEqual(page[0]['id'], sha)    # the uploaded file keeps its own entry
+            store.close()
+
     def test_refuses_entities(self):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')

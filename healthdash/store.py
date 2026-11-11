@@ -406,6 +406,36 @@ class Store:
             "SELECT id, text FROM documents WHERE ext='.html' AND path LIKE 'Uploaded/%' AND person_edited=0 "
             "AND coalesce(status,'done')='done' AND id<>?", (except_id,))]
 
+    def link_doc(self, kind, rid, did):
+        """Add a source document to an existing entry (doesn't count as a person's edit)."""
+        r = self.get(kind, rid)
+        if not r or did in r['docs']:
+            return
+        with self.lock:
+            self.db.execute(f'UPDATE {kind} SET docs=? WHERE id=?', (json.dumps(r['docs'] + [did]), rid))
+            self.db.commit()
+
+    def same_day(self, kind, date, days=1):
+        """Entries not from an import whose date is within `days` of `date`."""
+        from datetime import date as D
+        if not date:
+            return []
+        out = []
+        for r in self.list(kind):
+            other = r.get('date') or ''
+            if (r['id'] or '').startswith('ccda-') or not other:
+                continue
+            if len(date) < 10 or len(other) < 10:   # a month or a year: the same if one contains the other
+                if date.startswith(other) or other.startswith(date):
+                    out.append(r)
+                continue
+            try:
+                if abs((D.fromisoformat(other[:10]) - D.fromisoformat(date[:10])).days) <= days:
+                    out.append(r)
+            except ValueError:
+                continue
+        return out
+
     def clear_upload_entries(self, did):
         """Entries read from an upload (not edited by a person), before reading it again."""
         with self.lock:

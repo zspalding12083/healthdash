@@ -78,10 +78,35 @@ def parse(data):
         raise NotCCDA(f'not readable XML ({e})')
     if root.tag != N + 'ClinicalDocument':
         raise NotCCDA('not a C-CDA clinical document')
-    ids = {}
+    ids, id_el, parent = {}, {}, {}
     for el in root.iter():
+        for c in el:
+            parent[c] = el
         if el.get('ID'):
             ids[el.get('ID')] = _t(el)
+            id_el[el.get('ID')] = el
+
+    def row_date(el):
+        """A date in the narrative table row an entry points to (Cerner puts procedure dates there)."""
+        r = el.find(N + 'text/' + N + 'reference') if el is not None else None
+        if r is None:
+            c = el.find(f'{N}code/{N}originalText/{N}reference') if el is not None else None
+            r = c
+        node = id_el.get((r.get('value') or '').lstrip('#')) if r is not None else None
+        while node is not None and node.tag != N + 'tr':
+            node = parent.get(node)
+        if node is None:
+            return None
+        for cell in node.iter():
+            t = (cell.text or '').strip()
+            m = re.fullmatch(r'(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})', t)
+            if m:
+                mo, d, y = m.groups()
+                y = int(y) + (2000 if len(y) == 2 and int(y) <= 50 else 1900 if len(y) == 2 else 0)
+                return f'{y:04d}-{int(mo):02d}-{int(d):02d}'
+            if re.fullmatch(r'(19|20)\d{2}', t):
+                return t
+        return None
 
     def ref(el):
         """Text of a coded element: originalText (or its #reference), else displayName."""
@@ -117,7 +142,7 @@ def parse(data):
         return _date(lo.get('value')) if lo is not None else None
 
     out = {'title': _t(root.find(N + 'title')) or 'Health summary', 'labs': [], 'medications': [],
-           'problems': [], 'allergies': [], 'sections': []}
+           'problems': [], 'allergies': [], 'procedures': [], 'sections': []}
     eff = root.find(N + 'effectiveTime')
     out['doc_date'] = _date(eff.get('value')) if eff is not None else None
     cust = root.find(f'.//{N}custodian//{N}representedCustodianOrganization/{N}name')
@@ -192,6 +217,24 @@ def parse(data):
                     'name': name, 'first_noted': when(obs) or when(act),
                     'status': 'resolved' if kind == 'resolved' or (st is not None and st.get('code') in ('completed', 'resolved'))
                     else 'active'})
+        elif kind == 'procedures':
+            for proc in sec.iter(N + 'procedure'):
+                name = ref(proc.find(N + 'code')) or textref(proc)
+                if not name or name.lower() in ('procedure', 'none'):
+                    continue
+                st = proc.find(N + 'statusCode')
+                if st is not None and st.get('code') in ('cancelled', 'aborted', 'nullified'):
+                    continue
+                who = proc.find(f'.//{N}performer//{N}assignedPerson/{N}name')
+                date = when(proc) or row_date(proc)
+                name = re.sub(r'\s*\(None\)', '', name)
+                m = re.search(r'\s+(\d{1,2})/((?:19|20)\d{2})\s*$', name)   # "LAMINECTOMY 9/2017"
+                if m:
+                    date = date or f'{m.group(2)}-{int(m.group(1)):02d}'
+                    name = name[:m.start()]
+                name = re.sub(r'\s+\d{1,2}$', '', name).strip(' ,;')     # table footnote numbers
+                out['procedures'].append({'name': name, 'date': date,
+                                          'provider': _t(who) or None})
         elif kind == 'allergies':
             for act in sec.iterfind(f'{N}entry/{N}act'):
                 obs = act.find(f'.//{N}observation')
@@ -212,6 +255,17 @@ def parse(data):
                             break
                 out['allergies'].append({'substance': substance, 'reaction': reaction or None,
                                          'first_noted': when(obs) or when(act)})
+    if out['visit'] and (not out['visit']['kind'] or not out['visit']['provider']):
+        for sec in root.iter(N + 'section'):
+            code = sec.find(N + 'code')
+            if code is None or code.get('code') != '46240-8':
+                continue
+            e = sec.find(f'.//{N}encounter')
+            if e is not None:
+                out['visit']['kind'] = out['visit']['kind'] or ref(e.find(N + 'code'))
+                p = e.find(f'.//{N}performer//{N}assignedPerson/{N}name')
+                out['visit']['provider'] = out['visit']['provider'] or _t(p) or None
+            break
     if out['visit']:
         for title, nar in out['sections']:
             low = title.lower()

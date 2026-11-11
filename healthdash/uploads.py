@@ -188,7 +188,8 @@ class Uploads:
         found, bad = [], 0
         for name, xml in ccda.documents_in(data, d.get('orig_path') or ''):
             try:
-                found.append((hashlib.sha256(xml).hexdigest(), name, ccda.parse(xml)))
+                # the readable page gets its own id (an uploaded .xml file already uses the file's)
+                found.append((hashlib.sha256(xml + b'#page').hexdigest(), name, ccda.parse(xml)))
             except ccda.NotCCDA:
                 bad += 1
         if not found:
@@ -196,20 +197,28 @@ class Uploads:
         when = lambda x: ((x[2]['visit'] or {}).get('date') or x[2]['doc_date'] or '')
         found.sort(key=when)
         label = os.path.splitext(d.get('orig_path') or 'export')[0]
-        docs, enc, labs, meds, probs, alls = [], [], [], {}, {}, {}
+        docs, enc, labs, meds, probs, alls, procs, links = [], [], [], {}, {}, {}, {}, []
+        HOSPITAL = re.compile(r'inpatient|emergency|observation|admission|hospital', re.I)
         for xsha, name, doc in found:
             v = doc['visit']
             page = ccda.page(doc)
             with open(os.path.join(self.files_dir, xsha + '.html'), 'w', encoding='utf-8') as f:
                 f.write(page)
-            title = f"{v['kind'] or 'Office'} visit".replace('Office Visit visit', 'Office visit') if v else doc['title']
+            stay = bool(v) and (HOSPITAL.search(v.get('kind') or '') or
+                                (v.get('end_date') and v.get('date') and v['end_date'][:10] > v['date'][:10]))
+            title = ('Hospital stay' if stay else f"{v['kind'] or 'Office'} visit".replace('Office Visit visit', 'Office visit')) \
+                if v else doc['title']
             docs.append({'id': xsha, 'path': f"{IMPORTED_DIR}/{label}/{name.rsplit('/', 1)[-1]}", 'orig_path': name,
                          'title': title, 'doc_date': when((xsha, name, doc)) or None,
-                         'category': 'office' if v else 'other', 'facility': doc['facility'], 'ext': '.html',
+                         'category': ('hospital' if stay else 'office') if v else 'other', 'facility': doc['facility'], 'ext': '.html',
                          'size': len(page), 'text': html_text(page), 'needs_review': False, 'status': 'done',
                          'summary': f"From the health summary export {d.get('orig_path')}."})
-            if v and v.get('date'):
+            same = self.store.same_day('encounters', v['date']) if v and v.get('date') else []
+            if same:   # already on the dashboard from other records: link this document to it
+                links.append(('encounters', same[0]['id'], xsha))
+            elif v and v.get('date'):
                 enc.append({'id': ccda.record_ids('visit', v.get('id') or xsha), 'docs': [xsha], 'date': v['date'],
+                            'end_date': v.get('end_date') if v.get('end_date') != v['date'] else None,
                             'type': v['kind'] or 'Office visit', 'facility': ' / '.join(x for x in (v.get('location'), v.get('facility')) if x),
                             'provider': v.get('provider') or None, 'reason': v.get('reason'),
                             'summary': ('Diagnoses: ' + v['diagnoses']) if v.get('diagnoses') else None})
@@ -230,6 +239,8 @@ class Uploads:
                 probs[p['name'].lower()] = dict(p, docs=[xsha])
             for a in doc['allergies']:
                 alls.setdefault(a['substance'].lower(), dict(a, docs=[xsha]))
+            for p in doc['procedures']:
+                procs.setdefault((p['name'].lower(), p.get('date')), dict(p, docs=[xsha], facility=doc['facility']))
         self.store.upsert_documents(docs)
         for x in docs:
             self.store.set_has_file(x['id'])
@@ -261,16 +272,29 @@ class Uploads:
         all_rows = [{'id': ccda.record_ids('allergy', a['substance']), 'docs': a['docs'], 'substance': a['substance'],
                      'reaction': a.get('reaction')}
                     for a in alls.values() if not any(a['substance'].lower().startswith(h[:6]) for h in have_all)]
+        proc_rows = []
+        for p in procs.values():
+            same = self.store.same_day('procedures', p['date'], days=3) if p.get('date') else []
+            if same:
+                links.append(('procedures', same[0]['id'], p['docs'][0]))
+                continue
+            proc_rows.append({'id': ccda.record_ids('proc', p['name'], p.get('date')), 'docs': p['docs'],
+                              'date': p.get('date'), 'name': p['name'], 'facility': p.get('facility'),
+                              'provider': p.get('provider')})
+        for kind, rid, did in links:
+            self.store.link_doc(kind, rid, did)
         counts = {}
         for kind, rows in (('encounters', enc), ('labs', lab_rows), ('medications', med_rows),
-                           ('conditions', cond_rows), ('allergies', all_rows)):
+                           ('conditions', cond_rows), ('allergies', all_rows), ('procedures', proc_rows)):
             if rows:
                 counts[kind] = self.store.upsert_imported(kind, rows)
         added = {k: v['added'] + v['updated'] for k, v in counts.items()}
         span = f"{when(found[0])} to {when(found[-1])}"
         summary = (f"Imported {len(docs)} documents ({span}): {added.get('encounters', 0)} visits, "
                    f"{added.get('labs', 0)} results and vital signs, {added.get('medications', 0)} medications, "
-                   f"{added.get('conditions', 0)} problems, {added.get('allergies', 0)} allergies."
+                   f"{added.get('conditions', 0)} problems, {added.get('allergies', 0)} allergies, "
+                   f"{added.get('procedures', 0)} procedures."
+                   + (f" Linked to {len(links)} entr{'y' if len(links) == 1 else 'ies'} already on the dashboard." if links else '')
                    + (f" {bad} file(s) could not be read." if bad else ''))
         self.store.set_upload_result(sha, title=f"Health summary export ({label})", category='other',
                                      doc_date=when(found[-1]) or None, facility=found[-1][2]['facility'],
