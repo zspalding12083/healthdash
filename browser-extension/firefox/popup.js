@@ -8,8 +8,11 @@ async function show(){
   $('#auto').disabled = $('#pdfs').disabled = $('#save').disabled = !s.on;
   $('#state').textContent = s.on ? (s.auto ? 'On: saving every portal page' : 'On') : 'Off';
   $('#statehint').textContent = s.on ? 'Only on your portal sites; sends only to your dashboard.' : 'Nothing is read or sent while off.';
-  $('#setup').hidden = !!(s.dashboard && s.key);
-  $('#dash').href = s.dashboard || '#';
+  $('#setup').hidden = !!(s.target.url && s.target.key);
+  $('#dash').href = s.target.url || '#';
+  $('#torow').hidden = s.dashboards.length < 2;
+  $('#to').innerHTML = '';
+  s.dashboards.forEach((d, i) => { const o = new Option(d.label || d.url, i, false, i === s.current); $('#to').add(o); });
   const {log = []} = await browser.storage.local.get('log');
   $('#log').innerHTML = log.length ? '' : '<div class="muted">Nothing sent yet.</div>';
   for(const e of log.slice(0, 15)){
@@ -27,6 +30,7 @@ async function show(){
 $('#on').onchange = e => browser.storage.local.set({on: e.target.checked});
 $('#auto').onchange = e => browser.storage.local.set({auto: e.target.checked});
 $('#pdfs').onchange = e => browser.storage.local.set({pdfs: e.target.checked});
+$('#to').onchange = e => browser.storage.local.set({current: +e.target.value});
 // The page you're on, looked up when the popup opens: Firefox only lets the plugin ask for a
 // site's permission as the very first thing a click does.
 let here = null, tabId = null;

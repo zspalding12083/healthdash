@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Health Records Capture",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Sends health records you view on your patient portals to your own healthdash dashboard. Off until you turn it on; only runs on the portal sites you choose.",
   "browser_specific_settings": {
     "gecko": {

@@ -17,6 +17,8 @@
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .muted{color:var(--ink2);font-size:13px}
   #status.ok{color:var(--ok)} #status.bad{color:var(--bad)}
+  .dash{border-top:1px solid var(--line);padding-top:8px;margin-top:10px}
+  .dash:first-child{border-top:0;margin-top:0;padding-top:0}
 </style>
 </head>
 <body>
@@ -27,13 +29,18 @@
     sends to the dashboard address below. Nothing goes to anyone else.</p>
 
   <section>
-    <h2>Your dashboard</h2>
-    <label for="dashboard">Dashboard address</label>
-    <input id="dashboard" placeholder="http://192.168.1.50:9380" autocomplete="off">
-    <label for="key">Plugin key (dashboard: 👤 → Accounts → Browser plugin keys → Create a key)</label>
-    <input id="key" type="password" placeholder="hdk_…" autocomplete="off">
-    <button id="test">Test connection</button> <span id="testmsg" class="muted"></span>
+    <h2>Your dashboards</h2>
+    <p class="muted">One per person. The popup's <b>Save to</b> picks which one gets what you save. Keys come from
+      each dashboard: 👤 → Accounts → Browser plugin keys → Create a key.</p>
+    <div id="dashes"></div>
+    <button id="adddash">Add a dashboard</button>
   </section>
+  <template id="dashrow"><div class="dash">
+    <label>Name (whose records)</label><input class="label" placeholder="Alex" autocomplete="off">
+    <label>Dashboard address</label><input class="url" placeholder="http://192.168.1.50:9380" autocomplete="off">
+    <label>Plugin key</label><input class="key" type="password" placeholder="hdk_…" autocomplete="off">
+    <button class="test">Test connection</button> <button class="remove">Remove</button> <span class="testmsg muted"></span>
+  </div></template>
 
   <section>
     <h2>Portal sites</h2>

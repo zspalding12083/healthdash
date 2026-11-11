@@ -48,22 +48,22 @@ function portalName(url){
 }
 
 async function send(name, body, kind){
-  const s = await getSettings();
-  if(!s.dashboard || !s.key) throw new Error('Set the dashboard address and plugin key in the settings first.');
-  const r = await fetch(`${dashboardOrigin(s.dashboard)}/api/upload?source=plugin&name=${encodeURIComponent(name)}`,
-                        {method: 'POST', headers: {'Authorization': 'Bearer ' + s.key, 'Content-Type': kind}, body});
+  const t = (await getSettings()).target;
+  if(!t.url || !t.key) throw new Error('Add a dashboard (address and plugin key) in the settings first.');
+  const r = await fetch(`${t.url}/api/upload?source=plugin&name=${encodeURIComponent(name)}`,
+                        {method: 'POST', headers: {'Authorization': 'Bearer ' + t.key, 'Content-Type': kind}, body});
   const j = await r.json().catch(() => ({}));
-  if(r.status === 401) throw new Error('The dashboard did not accept the plugin key. Create a new one under Accounts.');
+  if(r.status === 401) throw new Error(`${t.label || 'The dashboard'} did not accept the plugin key. Create a new one under Accounts.`);
   if(!r.ok) throw new Error(j.error || `The dashboard said ${r.status}`);
+  j.target = t;       // check back with the same dashboard, even if "Save to" changes meanwhile
   return j;
 }
 
 // after sending: see how the dashboard filed it (it reads and sorts in the background)
-async function follow(id, name){
-  const s = await getSettings();
+async function follow(id, name, t){
   for(let i = 0; i < 40; i++){
     await new Promise(r => setTimeout(r, i < 5 ? 2000 : 5000));
-    const r = await fetch(`${dashboardOrigin(s.dashboard)}/api/documents/${id}`, {headers: {'Authorization': 'Bearer ' + s.key}}).catch(() => null);
+    const r = await fetch(`${t.url}/api/documents/${id}`, {headers: {'Authorization': 'Bearer ' + t.key}}).catch(() => null);
     if(!r) continue;
     if(r.status === 404){ return log({key: id, state: 'skipped', name, note: 'Nothing new on this page; not kept.'}); }
     const d = await r.json().catch(() => null);
@@ -88,8 +88,8 @@ async function savePage(page, how){
     const res = await send(name, new Blob([page.html], {type: 'text/html'}), 'text/html');
     seen.add(page.textHash);
     if(res.duplicate) return log({key: res.id, id: res.id, state: 'skipped', name, note: `Already in the records as "${res.title}".`});
-    await log({key: res.id, id: res.id, state: 'sent', name, note: how === 'auto' ? 'Saved automatically; sorting…' : 'Sent; sorting…'});
-    follow(res.id, name);
+    await log({key: res.id, id: res.id, state: 'sent', name, note: (how === 'auto' ? 'Saved automatically' : 'Sent') + (res.target.label ? ` to ${res.target.label}` : '') + '; sorting…'});
+    follow(res.id, name, res.target);
   }catch(e){ await log({state: 'error', name, note: e.message}); }
 }
 
@@ -156,8 +156,8 @@ browser.downloads.onChanged.addListener(async delta => {
     if(String.fromCharCode(...head) !== '%PDF') throw new Error('the portal did not hand the PDF over again');
     const res = await send(/\.pdf$/i.test(name) ? name : name + '.pdf', blob, 'application/pdf');
     if(res.duplicate) return log({key: res.id, id: res.id, state: 'skipped', name, note: `Already in the records as "${res.title}".`});
-    await log({key: res.id, id: res.id, state: 'sent', name, note: 'PDF sent; sorting…'});
-    follow(res.id, name);
+    await log({key: res.id, id: res.id, state: 'sent', name, note: 'PDF sent' + (res.target.label ? ` to ${res.target.label}` : '') + '; sorting…'});
+    follow(res.id, name, res.target);
   }catch(e){
     await log({state: 'error', name, note: `Could not send this PDF automatically (${e.message}). It is in your Downloads; drop it on the dashboard.`});
   }

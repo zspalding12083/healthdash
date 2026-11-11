@@ -5,8 +5,9 @@ const DEFAULTS = {
   on: false,                 // nothing runs on any site while off
   auto: false,               // save every portal page you open (otherwise only the "Save this page" button)
   pdfs: true,                // send PDFs you download from the portal sites
-  dashboard: '',             // e.g. http://192.168.1.50:9380
-  key: '',                   // a plugin key from the dashboard (Accounts > Browser plugin keys)
+  dashboards: [],            // [{label, url, key}]: one per person's dashboard
+  current: 0,                // which one "Save to" sends to
+  dashboard: '', key: '',    // (1.0.x single-dashboard settings, read once and moved into the list)
   sites: [                   // match patterns: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
     '*://*/MyChart/*',                 // Epic MyChart, on each health system's own domain
     '*://*/mychart/*',
@@ -17,9 +18,16 @@ const DEFAULTS = {
 };
 
 async function getSettings(){
-  const s = await browser.storage.local.get(Object.keys(DEFAULTS));
-  return Object.assign({}, DEFAULTS, s);
+  const s = Object.assign({}, DEFAULTS, await browser.storage.local.get(Object.keys(DEFAULTS)));
+  if(!s.dashboards.length && s.dashboard) s.dashboards = [{label: 'Dashboard', url: s.dashboard, key: s.key}];
+  s.current = Math.max(0, Math.min(s.current || 0, s.dashboards.length - 1));
+  const t = s.dashboards[s.current] || {};
+  s.target = {label: t.label || '', url: dashboardOrigin(t.url || ''), key: t.key || ''};
+  return s;
 }
+
+// a match pattern for a dashboard's address (patterns can't name a port)
+function dashboardPattern(origin){ const u = new URL(origin); return `${u.protocol}//${u.hostname}/*`; }
 
 function dashboardOrigin(url){
   try{ const u = new URL(url); return `${u.protocol}//${u.host}`; }catch(e){ return ''; }

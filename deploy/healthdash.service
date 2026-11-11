@@ -1,5 +1,5 @@
 [Unit]
-Description=Health records dashboard
+Description=Health records dashboard (__STATE__)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,9 +8,9 @@ User=healthdash
 WorkingDirectory=/opt/healthdash
 # the package lives at /opt/healthdash/healthdash/
 Environment=PYTHONPATH=/opt/healthdash
-# install.sh fills in __IMPORT_FROM__ and __TITLE__ from deploy/local.env
-ExecStart=/usr/bin/python3 -m healthdash serve --db /var/lib/healthdash/health.db --files /var/lib/healthdash/files --port 9380 --import-from __IMPORT_FROM__ --title "__TITLE__"
-StateDirectory=healthdash
+# deploy/unit.py fills in __STATE__, __PORT__, __IMPORT_FROM__ and __TITLE__
+ExecStart=/usr/bin/python3 -m healthdash serve --db /var/lib/__STATE__/health.db --files /var/lib/__STATE__/files --port __PORT__ --import-from __IMPORT_FROM__ --title "__TITLE__"
+StateDirectory=__STATE__
 StateDirectoryMode=0700
 UMask=0077
 Restart=always

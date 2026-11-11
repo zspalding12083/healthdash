@@ -14,13 +14,8 @@ cd "$HERE"
 python3 -m unittest discover -s tests -t . -q
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-python3 - "$TMP/healthdash.service" "$IMPORT_FROM" "$TITLE" <<'EOF'
-import sys
-out, imp, title = sys.argv[1:]
-s = open('deploy/healthdash.service').read()
-title = title.replace('\\', '').replace('"', "'").replace('%', '%%')
-open(out, 'w').write(s.replace('__IMPORT_FROM__', imp).replace('__TITLE__', title))
-EOF
+PORT=${URL##*:}; PORT=${PORT%%/*}
+python3 deploy/unit.py "$TMP/healthdash.service" healthdash "$PORT" "$IMPORT_FROM" "$TITLE"
 ssh "$PI" 'rm -rf /tmp/healthdash-install && mkdir -p /tmp/healthdash-install'
 rsync -a --exclude __pycache__ --exclude '*.pyc' healthdash "$TMP/healthdash.service" "$PI:/tmp/healthdash-install/"
 ssh -t "$PI" 'set -e

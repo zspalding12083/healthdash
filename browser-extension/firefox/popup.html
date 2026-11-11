@@ -13,6 +13,7 @@
   button{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   button:disabled{opacity:.5;cursor:default}
+  select{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:6px 8px;font:inherit;max-width:200px}
   .switch{position:relative;width:46px;height:26px;flex:none}
   .switch input{opacity:0;width:0;height:0}
   .switch span{position:absolute;inset:0;background:#999;border-radius:13px;transition:.15s}
@@ -35,6 +36,7 @@
     <label class="switch"><input type="checkbox" id="auto"><span></span></label></div>
   <div class="row"><div>Send PDFs I download from the portals</div>
     <label class="switch"><input type="checkbox" id="pdfs"><span></span></label></div>
+  <div class="row" id="torow" hidden><div>Save to</div><select id="to"></select></div>
   <div class="row"><button class="primary" id="save">Save this page</button><span class="muted" id="msg"></span></div>
   <div class="muted" id="setup" hidden>Not set up yet: <a href="#" id="opts">open settings</a> to add your dashboard address and key.</div>
   <div class="log" id="log"></div>

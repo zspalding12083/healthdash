@@ -140,6 +140,21 @@ On the server:
 
 Edits made on the dashboard are kept: re-importing never overwrites a record someone changed by hand.
 
+## More people
+
+Each person gets their own dashboard: own records, accounts, port and backups, all on the same
+server and sharing the same program code.
+
+```bash
+deploy/add-person.sh alex 9381 "Alex's Health"   # asks for the server's sudo password once
+```
+
+It creates the service `healthdash-alex` with its data in `/var/lib/healthdash-alex` and adds it to
+`OTHERS` in `deploy/local.env`, so `deploy/sync.sh push` updates and restarts it and
+`deploy/sync.sh backup` copies it into `backups/alex/`. Open `http://<server>:9381` and create its first
+account right away. In the Firefox plugin, add it as another dashboard; the popup's **Save to** picks
+whose dashboard gets what you save (useful with MyChart's family access).
+
 ## Firefox plugin: save records as you view them
 
 Patient portals (MyChart, FollowMyHealth, HealtheLife and others) rarely offer a bulk download. The

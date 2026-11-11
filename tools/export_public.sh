@@ -13,7 +13,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
 
 ALLOW=(README.md LICENSE.md .gitignore browser-extension healthdash tests sample docs/screenshot.jpg tools/dump_text.py tools/export_public.sh
-       deploy/install.sh deploy/sync.sh deploy/healthdash.service deploy/local.env.example)
+       deploy/install.sh deploy/sync.sh deploy/healthdash.service deploy/local.env.example deploy/add-person.sh deploy/unit.py)
 
 mkdir -p "$DEST"
 rsync -a --delete --relative --exclude __pycache__ --exclude '*.pyc' --exclude .git \
