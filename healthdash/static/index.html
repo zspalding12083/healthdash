@@ -155,7 +155,7 @@ details.panel[open] summary{margin-bottom:10px}
     <div class="brand">__TITLE__<small id="span"></small></div>
     <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
     <button class="btn primary" id="upl" title="Add PDFs or photos of records">＋ Add records</button>
-    <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,application/pdf,image/*" hidden>
+    <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.zip,.xml,application/pdf,image/*,application/zip" hidden>
     <button class="btn" id="theme" title="Light / dark">◐</button>
     <button class="btn" id="acct" hidden title="Accounts and sign out"></button>
   </div>
@@ -165,7 +165,7 @@ details.panel[open] summary{margin-bottom:10px}
 <footer class="disc">Personal records, not medical advice. Sorting, scanned text and lab values are read automatically and can be wrong; the original document is the record. Provided as is, with no warranty or liability.</footer>
 
 <div class="tray" id="tray" aria-live="polite"></div>
-<div class="drop" id="drop"><div>Drop PDFs or photos to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
+<div class="drop" id="drop"><div>Drop PDFs, photos or a health summary export (.zip) to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
 <dialog id="dlg"><div class="dlg-h"><div id="dlg-title"></div><button class="btn" id="dlg-close">Close</button></div><div class="dlg-b" id="dlg-body"></div></dialog>
 
 <script>
@@ -381,6 +381,7 @@ const LAB_GROUPS = [
   ['Clotting', /^(inr|prothrombin|aptt|ptt|fibrinogen|d-dimer)/i],
   ['Heart', /^(troponin|bnp|nt-probnp|ck)/i],
   ['Cholesterol', /^(cholesterol|ldl|hdl|triglycer)/i],
+  ['Vital signs', /^(body |bmi|systolic|diastolic|heart rate|respiratory rate|oxygen saturation|pulse)/i],
 ];
 function labGroup(name){ const g = LAB_GROUPS.find(([, rx]) => rx.test(name)); return g ? g[0] : 'Other tests'; }
 function refRange(s){ const m = (s||'').match(/(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/); return m ? [+m[1], +m[2]] : null; }

@@ -20,7 +20,7 @@ SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 MAX_BODY = 200 * 1024 * 1024
 FILE_TYPES = {'.pdf': 'application/pdf', '.tif': 'image/tiff', '.tiff': 'image/tiff',
               '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-              '.txt': 'text/plain; charset=utf-8', '.wav': 'audio/wav', '.html': 'text/html; charset=utf-8',
+              '.txt': 'text/plain; charset=utf-8', '.wav': 'audio/wav', '.html': 'text/html; charset=utf-8', '.zip': 'application/zip', '.xml': 'application/xml',
               '.doc': 'application/msword',
               '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
 

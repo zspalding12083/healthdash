@@ -20,7 +20,9 @@ from .store import ValidationError, now
 
 TYPES = {'.pdf': (b'%PDF',), '.jpg': (b'\xff\xd8\xff',), '.jpeg': (b'\xff\xd8\xff',),
          '.png': (b'\x89PNG',), '.tif': (b'II*\x00', b'MM\x00*'), '.tiff': (b'II*\x00', b'MM\x00*'),
-         '.html': (b'<',)}  # a portal page saved by the browser plugin
+         '.html': (b'<',),   # a portal page saved by the browser plugin
+         '.zip': (b'PK',), '.xml': (b'<',)}  # a health summary export (C-CDA, e.g. MyChart's)
+IMPORTED_DIR = 'Imported'
 MIN_PAGE_TEXT = 300  # a saved page with less text than this is a menu or a loading screen
 UPLOAD_DIR = 'Uploaded'
 NO_TOOLS = "the dashboard can't read files yet"
@@ -86,7 +88,7 @@ class Uploads:
         name = safe_name(name)
         ext = os.path.splitext(name)[1].lower()
         if ext not in TYPES or (ext == '.html' and source != 'plugin'):
-            raise ValidationError('only PDFs and pictures (JPG, PNG, TIFF) can be added')
+            raise ValidationError('only PDFs, pictures (JPG, PNG, TIFF) and health summary exports (.zip, .xml) can be added')
         if ext == '.html':
             data = data.lstrip()
         if not data or not any(data.startswith(m) for m in TYPES[ext]):
@@ -125,6 +127,8 @@ class Uploads:
         d = self.store.document(sha)
         if not d:
             return
+        if d.get('ext') in ('.zip', '.xml'):
+            return self.import_summary(sha, d)
         if reuse_text and d.get('text'):
             text = d['text']
             ex = {'pages': text.split('\f'), 'ocr_pages': d.get('ocr_pages') or []}
@@ -172,6 +176,107 @@ class Uploads:
                 'payee': r['facility'], 'description': r['title'], 'charged': r['money']['charged'],
                 'needs_review': bool(r['questions']) or not r['money']['sure']}])
         return r
+
+    def import_summary(self, sha, d):
+        """A C-CDA health summary export: a readable page per document, plus its visits, results,
+        vital signs, medications, problems and allergies. Re-importing the same or a newer export
+        updates instead of doubling; results already recorded from other documents are skipped."""
+        from . import ccda, parsers
+        from .extract import html_text
+        with open(os.path.join(self.files_dir, sha + d['ext']), 'rb') as f:
+            data = f.read()
+        found, bad = [], 0
+        for name, xml in ccda.documents_in(data, d.get('orig_path') or ''):
+            try:
+                found.append((hashlib.sha256(xml).hexdigest(), name, ccda.parse(xml)))
+            except ccda.NotCCDA:
+                bad += 1
+        if not found:
+            raise RuntimeError("no health summary documents could be read in this file")
+        when = lambda x: ((x[2]['visit'] or {}).get('date') or x[2]['doc_date'] or '')
+        found.sort(key=when)
+        label = os.path.splitext(d.get('orig_path') or 'export')[0]
+        docs, enc, labs, meds, probs, alls = [], [], [], {}, {}, {}
+        for xsha, name, doc in found:
+            v = doc['visit']
+            page = ccda.page(doc)
+            with open(os.path.join(self.files_dir, xsha + '.html'), 'w', encoding='utf-8') as f:
+                f.write(page)
+            title = f"{v['kind'] or 'Office'} visit".replace('Office Visit visit', 'Office visit') if v else doc['title']
+            docs.append({'id': xsha, 'path': f"{IMPORTED_DIR}/{label}/{name.rsplit('/', 1)[-1]}", 'orig_path': name,
+                         'title': title, 'doc_date': when((xsha, name, doc)) or None,
+                         'category': 'office' if v else 'other', 'facility': doc['facility'], 'ext': '.html',
+                         'size': len(page), 'text': html_text(page), 'needs_review': False, 'status': 'done',
+                         'summary': f"From the health summary export {d.get('orig_path')}."})
+            if v and v.get('date'):
+                enc.append({'id': ccda.record_ids('visit', v.get('id') or xsha), 'docs': [xsha], 'date': v['date'],
+                            'type': v['kind'] or 'Office visit', 'facility': ' / '.join(x for x in (v.get('location'), v.get('facility')) if x),
+                            'provider': v.get('provider') or None, 'reason': v.get('reason'),
+                            'summary': ('Diagnoses: ' + v['diagnoses']) if v.get('diagnoses') else None})
+            for r in doc['labs']:
+                labs.append(dict(r, docs=[xsha], facility=doc['facility']))
+            listed = set()
+            for m in doc['medications']:
+                k = m['name'].lower()
+                listed.add(k)
+                prev = meds.get(k)
+                meds[k] = dict(m, docs=[xsha], first=(prev or {}).get('first') or when((xsha, name, doc)),
+                               last_seen=when((xsha, name, doc)), gone=None)
+            if v and listed:  # a medication that drops off a visit's (non-empty) list was stopped by then
+                for k, m in meds.items():
+                    if k not in listed and not m.get('gone') and not m.get('end_date') and m.get('status') == 'active':
+                        m['gone'] = when((xsha, name, doc))
+            for p in doc['problems']:
+                probs[p['name'].lower()] = dict(p, docs=[xsha])
+            for a in doc['allergies']:
+                alls.setdefault(a['substance'].lower(), dict(a, docs=[xsha]))
+        self.store.upsert_documents(docs)
+        for x in docs:
+            self.store.set_has_file(x['id'])
+        # results: one name per test; skip values already recorded from other documents
+        lab_rows = []
+        for r in parsers.normalize(labs):
+            if r['analyte'].isupper():
+                r['analyte'] = r['analyte'].title()
+            r['id'] = ccda.record_ids('lab', r['analyte'], r['date'], r['value'])
+            if self.store.get('labs', r['id']) or not self.store.lab_exists(r):
+                lab_rows.append(r)
+        med_rows = []
+        for m in meds.values():
+            end, status, notes = m.get('end_date'), 'active', None
+            if end or m.get('status') in ('aborted', 'completed', 'cancelled'):
+                status = 'stopped'
+            if m.get('gone') and not end:
+                status, end = 'stopped', m['gone']
+                notes = f"Not on the medication list at the {m['gone']} visit (last listed {m['last_seen']})."
+            med_rows.append({'id': ccda.record_ids('med', m['name'], m.get('start_date')), 'docs': m['docs'],
+                             'name': m['name'], 'dose': m.get('dose'), 'schedule': m.get('schedule'),
+                             'start_date': m.get('start_date') or m['first'], 'end_date': end, 'status': status,
+                             'notes': notes or ('Start date is when it first appears in this export.' if not m.get('start_date') else None)})
+        have_cond = {c['name'].lower() for c in self.store.list('conditions') if not (c['id'] or '').startswith('ccda-')}
+        have_all = {a['substance'].lower() for a in self.store.list('allergies') if not (a['id'] or '').startswith('ccda-')}
+        cond_rows = [{'id': ccda.record_ids('cond', p['name']), 'docs': p['docs'], 'name': p['name'],
+                      'status': p['status'], 'first_noted': p.get('first_noted')}
+                     for p in probs.values() if p['name'].lower() not in have_cond]
+        all_rows = [{'id': ccda.record_ids('allergy', a['substance']), 'docs': a['docs'], 'substance': a['substance'],
+                     'reaction': a.get('reaction')}
+                    for a in alls.values() if not any(a['substance'].lower().startswith(h[:6]) for h in have_all)]
+        counts = {}
+        for kind, rows in (('encounters', enc), ('labs', lab_rows), ('medications', med_rows),
+                           ('conditions', cond_rows), ('allergies', all_rows)):
+            if rows:
+                counts[kind] = self.store.upsert_imported(kind, rows)
+        added = {k: v['added'] + v['updated'] for k, v in counts.items()}
+        span = f"{when(found[0])} to {when(found[-1])}"
+        summary = (f"Imported {len(docs)} documents ({span}): {added.get('encounters', 0)} visits, "
+                   f"{added.get('labs', 0)} results and vital signs, {added.get('medications', 0)} medications, "
+                   f"{added.get('conditions', 0)} problems, {added.get('allergies', 0)} allergies."
+                   + (f" {bad} file(s) could not be read." if bad else ''))
+        self.store.set_upload_result(sha, title=f"Health summary export ({label})", category='other',
+                                     doc_date=when(found[-1]) or None, facility=found[-1][2]['facility'],
+                                     status='done', needs_review=False, review_note=None, text=summary,
+                                     summary=summary, classified=classify.VERSION)
+        return {'questions': [], 'labs': [], 'money': None}
 
     def delete(self, sha):
         d = self.store.delete_upload(sha)

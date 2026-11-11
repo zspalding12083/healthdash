@@ -162,7 +162,12 @@ SYNONYMS.update({
     'protein, total': 'Total protein', 'bilirubin, total': 'Bilirubin, total', 'ast (sgot)': 'AST',
     'alt (sgpt)': 'ALT', 'alkaline phosphatase, s': 'Alkaline phosphatase', 'globulin, total': 'Globulin',
     'bun/creatinine ratio': 'BUN/Creat Ratio', 'egfr if nonafricn am': 'eGFR', 'hemoglobin a1c': 'Hemoglobin A1c',
-    't4,free(direct)': 'Free T4', 'triiodothyronine,free': 'Free T3', 'c-reactive protein, quant': 'CRP',
+    't4,free(direct)': 'Free T4', 'urea nitrogen (bun)': 'BUN', 'carbon dioxide': 'CO2 (bicarbonate)',
+    'protein, total, serum': 'Total protein', 'bilirubin, total, serum': 'Bilirubin, total',
+    'alkaline phosphatase': 'Alkaline phosphatase', 'ast (sgot)': 'AST', 'alt (sgpt)': 'ALT',
+    'egfr': 'eGFR', 'egfr creatinine (ckd-epi 2021)': 'eGFR', 'hemoglobin a1c (hba1c)': 'Hemoglobin A1c',
+    'tsh': 'TSH', 'oxygen saturation in arterial blood by pulse oximetry': 'Oxygen saturation (SpO2)', 'cholesterol, total': 'Cholesterol, total', 'hdl cholesterol': 'HDL', 'ldl-cholesterol': 'LDL',
+    'triglycerides': 'Triglycerides', 'bun/creatinine ratio': 'BUN/Creat Ratio', 'mean platelet volume': 'MPV', 'triiodothyronine,free': 'Free T3', 'c-reactive protein, quant': 'CRP',
     'thyroid peroxidase (tpo) ab': 'TPO antibodies', 'immunoglobulin a, qn': 'IgA',
 })
 
