@@ -19,7 +19,9 @@ from .extract import extract_file
 from .store import ValidationError, now
 
 TYPES = {'.pdf': (b'%PDF',), '.jpg': (b'\xff\xd8\xff',), '.jpeg': (b'\xff\xd8\xff',),
-         '.png': (b'\x89PNG',), '.tif': (b'II*\x00', b'MM\x00*'), '.tiff': (b'II*\x00', b'MM\x00*')}
+         '.png': (b'\x89PNG',), '.tif': (b'II*\x00', b'MM\x00*'), '.tiff': (b'II*\x00', b'MM\x00*'),
+         '.html': (b'<',)}  # a portal page saved by the browser plugin
+MIN_PAGE_TEXT = 300  # a saved page with less text than this is a menu or a loading screen
 UPLOAD_DIR = 'Uploaded'
 NO_TOOLS = "the dashboard can't read files yet"
 
@@ -31,6 +33,10 @@ def tools_missing(ext):
 
 def default_extract(path):
     ext = os.path.splitext(path)[1].lower()
+    if ext == '.html':
+        from .extract import html_text
+        with open(path, 'rb') as f:
+            return {'pages': [html_text(f.read())], 'ocr_pages': []}
     missing = tools_missing(ext)
     if missing:
         raise RuntimeError(NO_TOOLS + ' (missing: ' + ', '.join(missing) + '). Install them with: '
@@ -76,11 +82,13 @@ class Uploads:
         self.q.put(sha)
         return True
 
-    def add(self, name, data):
+    def add(self, name, data, source='dashboard'):
         name = safe_name(name)
         ext = os.path.splitext(name)[1].lower()
-        if ext not in TYPES:
+        if ext not in TYPES or (ext == '.html' and source != 'plugin'):
             raise ValidationError('only PDFs and pictures (JPG, PNG, TIFF) can be added')
+        if ext == '.html':
+            data = data.lstrip()
         if not data or not any(data.startswith(m) for m in TYPES[ext]):
             raise ValidationError(f"{name} doesn't look like a real {ext[1:].upper()} file")
         sha = hashlib.sha256(data).hexdigest()
@@ -94,7 +102,8 @@ class Uploads:
         self.store.upsert_documents([{
             'id': sha, 'path': f'{UPLOAD_DIR}/{name}', 'orig_path': name, 'title': os.path.splitext(name)[0],
             'category': 'other', 'size': len(data), 'ext': ext, 'text': '', 'needs_review': True,
-            'status': 'processing', 'summary': f'Added from the dashboard on {now()[:10]}.'}])
+            'status': 'processing', 'summary': (f'Saved by the browser plugin on {now()[:10]}.' if source == 'plugin'
+                                                else f'Added from the dashboard on {now()[:10]}.')}])
         self.store.set_has_file(sha)
         self.q.put(sha)
         return {'id': sha, 'duplicate': False, 'title': name, 'status': 'processing'}
@@ -127,6 +136,10 @@ class Uploads:
         r = classify.classify(text, d.get('orig_path') or '', self.store.known_facilities(),
                               classify.Filed(self.store.filed_for_learning()))
         dup = classify.near_duplicate(text, self.store.texts_except(sha))
+        if (d.get('ext') == '.html' and not reuse_text and
+                (len(text.strip()) < MIN_PAGE_TEXT or (dup and dup['how'] == 'copy' and dup['score'] >= 0.95))):
+            self.delete(sha)  # a page with nothing new on it: not worth asking about
+            return None
         questions = list(r['questions'])
         if dup:
             when = f" from {dup['doc_date']}" if dup.get('doc_date') else ''

@@ -20,7 +20,7 @@ SHA_RE = re.compile(r'^[0-9a-f]{64}$')
 MAX_BODY = 200 * 1024 * 1024
 FILE_TYPES = {'.pdf': 'application/pdf', '.tif': 'image/tiff', '.tiff': 'image/tiff',
               '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-              '.txt': 'text/plain; charset=utf-8', '.wav': 'audio/wav',
+              '.txt': 'text/plain; charset=utf-8', '.wav': 'audio/wav', '.html': 'text/html; charset=utf-8',
               '.doc': 'application/msword',
               '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
 
@@ -32,6 +32,8 @@ SCRIPT_ROUTES = {('GET', 'summary'), ('GET', 'health'), ('GET', 'files'), ('GET'
 # 127.0.0.1, and must not read anything without signing in
 LOOPBACK_ROUTES = {('GET', 'health'), ('GET', 'files'), ('POST', 'import'), ('POST', 'files')}
 LOOPBACK = {'127.0.0.1', '::1', '::ffff:127.0.0.1'}
+# what a browser-plugin key may do: add files, see how they were filed, check it's connected
+KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health')}
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
 
 
@@ -86,6 +88,14 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             m = c.get('hd_session')
             return m.value if m else None
 
+        def _key_user(self):
+            h = self.headers.get('Authorization') or ''
+            if not auth or not h.startswith('Bearer '):
+                return None
+            if not hasattr(self, '_keyed'):
+                self._keyed = auth.key_user(h[7:].strip())
+            return self._keyed
+
         def _user(self):
             if not auth:
                 return 'local'
@@ -96,6 +106,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _allowed(self, method, parts):
             if not auth or self._user():
                 return True
+            if self._key_user():
+                return parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in KEY_ROUTES and \
+                    (parts[1] != 'documents' or len(parts) == 3)
             if method in ('GET', 'HEAD') and (not parts or parts == ['index.html'] or parts[0] == 'static'):
                 return True
             if parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in PUBLIC_API:
@@ -121,7 +134,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             parts = [p for p in u.path.split('/') if p]
             qs = {k: v[-1] for k, v in parse_qs(u.query).items()}
             try:
-                if method not in ('GET', 'HEAD') and not self._same_origin():
+                # a plugin key is sent on purpose, never automatically like a cookie, so the
+                # same-page rule (which stops other websites using your sign-in) doesn't apply
+                if method not in ('GET', 'HEAD') and not self._same_origin() and not self._key_user():
                     return self._err(403, 'requests must come from the dashboard page')
                 if not self._allowed(method, parts):
                     return self._err(401, 'please sign in')
@@ -207,7 +222,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     # from anyone on the LAN using the dashboard; the file is checked, then read
                     if not uploads:
                         return self._err(503, 'uploads are not enabled')
-                    return self._send(202, uploads.add(qs.get('name', ''), self._raw_body()))
+                    return self._send(202, uploads.add(qs.get('name', ''), self._raw_body(),
+                                                       source=qs.get('source', 'dashboard')))
                 if p == ['import']:
                     if not self._importer():
                         return self._err(403, 'import is only allowed from the ingest host')
@@ -236,7 +252,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _accounts(self, method, p):
             """Sign-in and account routes; False when the path isn't one of them."""
             if p == ['auth'] and method == 'GET':
-                return self._send(200, {'auth': bool(auth), 'user': self._user() if auth else None,
+                return self._send(200, {'auth': bool(auth), 'user': (self._user() or self._key_user()) if auth else None,
+                                        'via_key': bool(auth and not self._user() and self._key_user()),
                                         'setup_needed': bool(auth) and auth.count() == 0})
             if not auth:
                 return False
@@ -256,6 +273,13 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if p == ['logout'] and method == 'POST':
                 auth.logout(self._token())
                 return self._send(200, {'signed_out': True}, extra={'Set-Cookie': auth.cookie(None)})
+            if p[:1] == ['keys'] and self._user():
+                if p == ['keys'] and method == 'GET':
+                    return self._send(200, auth.keys())
+                if p == ['keys'] and method == 'POST':
+                    return self._send(201, auth.create_key(self._user(), (self._json() or {}).get('label', '')))
+                if len(p) == 2 and method == 'DELETE':
+                    return self._send(200, {'revoked': auth.revoke_key(p[1])})
             if p[:1] != ['users']:
                 return False
             if p == ['users'] and method == 'GET':
@@ -314,8 +338,11 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             nice = os.path.basename(doc.get('organized_path') or doc.get('path') or fn)
             nice = re.sub(r'[^\w.\- ]', '_', nice)
             disp = 'attachment' if download else 'inline'
-            return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'),
-                              {'Content-Disposition': f'{disp}; filename="{nice}"'})
+            extra = {'Content-Disposition': f'{disp}; filename="{nice}"'}
+            if ext == '.html':  # a saved portal page: show it, but never run it or let it load anything
+                extra['Content-Security-Policy'] = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                                                    "img-src data:; font-src data:")
+            return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
 
         def _static(self, name):
             if '/' in name or name.startswith('.'):

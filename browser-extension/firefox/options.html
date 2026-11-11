@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Health Records Capture settings</title>
+<style>
+  :root{--ink:#1d2421;--ink2:#56605b;--line:#e2e5e1;--bg:#f5f6f4;--panel:#fff;--accent:#256c6c;--bad:#b3261e;--ok:#2f6b2f}
+  @media (prefers-color-scheme: dark){:root{--ink:#e6ebe8;--ink2:#a9b3ae;--line:#2c3331;--bg:#141817;--panel:#1c2120;--accent:#6fbdbb;--bad:#f08a80;--ok:#8fcf8a}}
+  body{margin:0;font:15px/1.5 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+  main{max-width:640px;margin:24px auto;padding:0 16px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  h1{font-size:20px} h2{font-size:16px;margin:0 0 8px}
+  label{display:block;font-size:13px;color:var(--ink2);margin:10px 0 4px}
+  input,textarea{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+  textarea{min-height:130px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+  button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:8px 12px;cursor:pointer;font:inherit;margin-top:10px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .muted{color:var(--ink2);font-size:13px}
+  #status.ok{color:var(--ok)} #status.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Health Records Capture</h1>
+  <p class="muted">Sends records you view on your patient portals to your own healthdash dashboard on your home network.
+    It is off until you switch it on from the toolbar button, it only works on the portal sites listed below, and it only
+    sends to the dashboard address below. Nothing goes to anyone else.</p>
+
+  <section>
+    <h2>Your dashboard</h2>
+    <label for="dashboard">Dashboard address</label>
+    <input id="dashboard" placeholder="http://192.168.1.50:9380" autocomplete="off">
+    <label for="key">Plugin key (dashboard: 👤 → Accounts → Browser plugin keys → Create a key)</label>
+    <input id="key" type="password" placeholder="hdk_…" autocomplete="off">
+    <button id="test">Test connection</button> <span id="testmsg" class="muted"></span>
+  </section>
+
+  <section>
+    <h2>Portal sites</h2>
+    <p class="muted">One per line. <code>*</code> matches anything. MyChart runs on each health system's own web address,
+      so the MyChart lines match its <code>/MyChart/</code> pages on any site. Firefox will ask you to allow the plugin on these sites.</p>
+    <textarea id="sites" spellcheck="false"></textarea>
+  </section>
+
+  <button class="primary" id="savebtn">Save settings</button> <span id="status"></span>
+</main>
+<script src="common.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

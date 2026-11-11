@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root{--ink:#1d2421;--ink2:#56605b;--line:#e2e5e1;--bg:#fff;--accent:#256c6c;--bad:#b3261e;--warn:#a5521b}
+  @media (prefers-color-scheme: dark){:root{--ink:#e6ebe8;--ink2:#a9b3ae;--line:#2c3331;--bg:#1c2120;--accent:#6fbdbb;--bad:#f08a80;--warn:#e19a62}}
+  body{margin:0;width:340px;font:14px/1.4 system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+  .wrap{padding:12px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0}
+  h1{font-size:15px;margin:0 0 6px}
+  .muted{color:var(--ink2);font-size:12px}
+  button{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.5;cursor:default}
+  .switch{position:relative;width:46px;height:26px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .switch span{position:absolute;inset:0;background:#999;border-radius:13px;transition:.15s}
+  .switch span:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s}
+  .switch input:checked + span{background:var(--accent)}
+  .switch input:checked + span:before{transform:translateX(20px)}
+  .log{border-top:1px solid var(--line);margin-top:10px;padding-top:6px;max-height:260px;overflow:auto}
+  .log div{padding:5px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .log b{font-weight:600}
+  .error{color:var(--bad)} .review{color:var(--warn)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Health Records Capture</h1>
+  <div class="row"><div><b id="state">Off</b><div class="muted" id="statehint">Nothing is read or sent while off.</div></div>
+    <label class="switch" title="Turn on or off"><input type="checkbox" id="on"><span></span></label></div>
+  <div class="row"><div>Save every portal page I open<div class="muted">Otherwise only when you press the button.</div></div>
+    <label class="switch"><input type="checkbox" id="auto"><span></span></label></div>
+  <div class="row"><div>Send PDFs I download from the portals</div>
+    <label class="switch"><input type="checkbox" id="pdfs"><span></span></label></div>
+  <div class="row"><button class="primary" id="save">Save this page</button><span class="muted" id="msg"></span></div>
+  <div class="muted" id="setup" hidden>Not set up yet: <a href="#" id="opts">open settings</a> to add your dashboard address and key.</div>
+  <div class="log" id="log"></div>
+  <div class="row"><a href="#" id="opts2" class="muted">Settings</a><a href="#" id="dash" class="muted" target="_blank">Open dashboard</a></div>
+</div>
+<script src="common.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

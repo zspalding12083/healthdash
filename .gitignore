@@ -22,3 +22,4 @@ __pycache__/
 deploy/local.env
 # the one demo screenshot (made-up sample data)
 !docs/screenshot.jpg
+dist/

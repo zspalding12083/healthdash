@@ -11,6 +11,7 @@ Needs poppler-utils, tesseract and (for .doc) libreoffice; install them on the m
 
 import hashlib
 import json
+import re
 import os
 import shutil
 import struct
@@ -226,3 +227,52 @@ def have_tools():
 if __name__ == '__main__':
     import sys
     extract_all(sys.argv[1], sys.argv[2])
+
+
+# ---- saved web pages (browser plugin) ---------------------------------------------------
+
+def html_text(data):
+    """Readable text of an HTML page: scripts and styles dropped, block elements on new lines,
+    table cells two spaces apart and <pre> blocks kept exactly (lab tables rely on the columns)."""
+    from html.parser import HTMLParser
+    CELL = '\x00'
+
+    class P(HTMLParser):
+        SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'head'}
+        BLOCK = {'p', 'div', 'br', 'tr', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'section', 'article',
+                 'header', 'footer', 'dt', 'dd', 'ul', 'ol', 'hr', 'pre', 'nav'}
+
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.out, self.skip, self.pre = [], 0, 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.SKIP:
+                self.skip += 1
+            elif tag in self.BLOCK:
+                self.out.append('\n')
+                self.pre += tag == 'pre'
+            elif tag in ('td', 'th'):
+                self.out.append(CELL)
+
+        def handle_endtag(self, tag):
+            if tag in self.SKIP and self.skip:
+                self.skip -= 1
+            elif tag in self.BLOCK:
+                self.out.append('\n')
+                if tag == 'pre' and self.pre:
+                    self.pre -= 1
+
+        def handle_data(self, d):
+            if self.skip:
+                return
+            self.out.append(d if self.pre else re.sub(r'\s+', ' ', d))
+
+    p = P()
+    p.feed(data.decode('utf-8', 'replace') if isinstance(data, bytes) else data)
+    lines = []
+    for line in ''.join(p.out).replace('\xa0', ' ').split('\n'):
+        line = re.sub(r'^\x00+', '', line)
+        line = re.sub(r'\s*\x00+\s*', '  ', line)
+        lines.append(line.rstrip())
+    return re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)).strip()

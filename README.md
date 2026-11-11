@@ -140,6 +140,27 @@ On the server:
 
 Edits made on the dashboard are kept: re-importing never overwrites a record someone changed by hand.
 
+## Firefox plugin: save records as you view them
+
+Patient portals (MyChart, FollowMyHealth, HealtheLife and others) rarely offer a bulk download. The
+plugin in `browser-extension/firefox` sends what you open to your dashboard instead.
+
+- **Off until you switch it on** from its toolbar button. While off it runs on no website at all.
+- Only works on the portal sites you list in its settings, and only sends to your dashboard's address.
+- **Save this page** sends the page you're looking at; **Save every portal page I open** does it for you.
+  PDFs you download from those sites are sent too (when the portal builds a PDF inside the page the
+  plugin can't fetch it again; it says so and you drop that file on the dashboard).
+- The dashboard reads and sorts each one like any other upload. Pages with almost no text, and pages
+  it already has, are dropped instead of asking you about them.
+- It uses a **plugin key** (dashboard: 👤 → Accounts → Browser plugin keys), which can only add files
+  and check on them; it can't read or change records. Revoke it there at any time.
+
+Install: `browser-extension/build.sh` makes `dist/healthdash-capture-firefox.zip`. Firefox only keeps
+signed add-ons installed: upload the zip at https://addons.mozilla.org/developers/ as **"On your own"**
+(unlisted, signed automatically, not published), then open the signed `.xpi` in Firefox. To just try it,
+use `about:debugging` → *This Firefox* → *Load Temporary Add-on* (removed when Firefox restarts). Then open
+the plugin's settings, enter the dashboard address and key, and allow the sites when Firefox asks.
+
 ## Layout
 
 ```

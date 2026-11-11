@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Health Records Capture",
+  "version": "1.0.0",
+  "description": "Sends health records you view on your patient portals to your own healthdash dashboard. Off until you turn it on; only runs on the portal sites you choose.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "healthdash-capture@healthdash.local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["storage", "downloads", "scripting", "activeTab"],
+  "optional_host_permissions": ["*://*/*"],
+  "background": {
+    "scripts": ["common.js", "background.js"]
+  },
+  "action": {
+    "default_title": "Health Records Capture: off",
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "48": "icon.svg",
+    "96": "icon.svg"
+  }
+}

@@ -627,11 +627,11 @@ function editRecord(kind, r){
 
 async function openDoc(id){
   const d = await api('/api/documents/' + id);
-  const viewable = d.has_file && ['.pdf','.jpg','.jpeg','.png','.txt'].includes(d.ext);
+  const viewable = d.has_file && ['.pdf','.jpg','.jpeg','.png','.txt','.html'].includes(d.ext);
   const audio = d.has_file && d.ext === '.wav';
   const linked = d.linked.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> ${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</div>`).join('');
   show(`<h2>${esc(d.title)}</h2><div class="muted small">${fdate(d.doc_date)}${d.facility?' · '+esc(d.facility):''} · ${esc(d.category||'')}</div>`,
-    `<div class="docview"><div>${viewable?`<iframe src="/file/${d.id}" title="document"></iframe>`: audio?`<audio controls src="/file/${d.id}" style="width:100%"></audio>`:''}
+    `<div class="docview"><div>${viewable?`<iframe src="/file/${d.id}" title="document" ${d.ext==='.html'?'sandbox=""':''}></iframe>`: audio?`<audio controls src="/file/${d.id}" style="width:100%"></audio>`:''}
       ${d.text?`<h3>${viewable?'Text (searchable)':'Text'}${d.ocr_pages.length?' <span class="tag">read from scan, may contain errors</span>':''}</h3><div class="doctext">${esc(d.text).replace(/\f/g,'\n\n──── next page ────\n\n')}</div>`:''}
       ${!d.has_file?'<p class="muted">The file itself is not on the dashboard (too large, or a disc image). It is in the records folder.</p>':''}</div>
       <div>${d.summary?`<p>${esc(d.summary)}</p>`:''}<div class="kv"><div>File</div><div class="small">${esc(d.organized_path||d.path)}</div><div>Original</div><div class="small">${esc(d.orig_path||'')}</div><div>Pages</div><div>${d.pages??''}</div></div>
@@ -790,7 +790,17 @@ async function openAccounts(){
       <button class="btn danger" data-rm="${esc(u.username)}" ${users.length<2?'disabled':''}>Remove</button></span></div>`).join('')}</div>
     <h3>Add someone</h3><form class="edit" id="af"><label>User name<input name="username" autocapitalize="none" required></label>
     <label>Password (8+ characters)<input name="password" type="password" autocomplete="new-password" required minlength="8"></label></form>
-    <div class="row-actions"><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>`);
+    <div class="row-actions"><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>
+    <h3>Browser plugin keys</h3><div class="muted small">A key lets the Firefox plugin add files you view on patient portals. It can only add files, not read or change records. Shown once; paste it into the plugin's settings.</div>
+    <div class="acct-list" id="keylist"></div><div class="row-actions" style="justify-content:flex-start"><button class="btn" id="newkey">Create a key</button></div><div id="keyshow"></div>`);
+  const keys = await api('/api/keys');
+  $('#keylist').innerHTML = keys.length ? keys.map(k => `<div><span><b>${esc(k.label)}</b> <span class="muted small">${esc(k.username)} · made ${esc((k.created||'').slice(0,10))} · last used ${esc((k.last_used||'never').slice(0,10))}</span></span><button class="btn danger" data-revoke="${esc(k.id)}">Revoke</button></div>`).join('') : '<span class="muted small">No keys yet.</span>';
+  $('#keylist').querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => { if(!confirm('Revoke this key? The plugin using it stops working.')) return; await api('/api/keys/' + b.dataset.revoke, {method:'DELETE'}); openAccounts(); });
+  $('#newkey').onclick = async () => {
+    const label = prompt('Name for this key (which browser or computer):', 'Firefox'); if(label === null) return;
+    const k = await api('/api/keys', {method:'POST', body:JSON.stringify({label})});
+    $('#keyshow').innerHTML = `<div class="ask-box"><b>Copy this key now</b>; it won't be shown again.<pre class="doctext" style="user-select:all">${esc(k.key)}</pre><div class="small">Dashboard address for the plugin: <b>${esc(location.origin)}</b></div></div>`;
+  };
   $('#adduser').onclick = async () => {
     const b = Object.fromEntries(new FormData($('#af')).entries());
     try{ await api('/api/users', {method:'POST', body:JSON.stringify(b)}); openAccounts(); }catch(e){ $('#amsg').textContent = e.message; }

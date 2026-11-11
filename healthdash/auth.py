@@ -29,7 +29,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT NOT NULL, created TEXT);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, username TEXT NOT NULL,
                                      created REAL NOT NULL, expires REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, username TEXT NOT NULL,
+                                     label TEXT, created TEXT, last_used TEXT);
 """
+KEY_PREFIX = 'hdk_'
 
 
 def hash_password(password, salt=None, iterations=ITERATIONS):
@@ -109,6 +112,7 @@ class Auth:
                 raise ValidationError("can't remove the last account")
             n = self.db.execute('DELETE FROM users WHERE username=?', (username,)).rowcount
             self.db.execute('DELETE FROM sessions WHERE username=?', (username,))
+            self.db.execute('DELETE FROM api_keys WHERE username=?', (username,))
             self.db.commit()
         if not n:
             raise ValidationError(f'no user {username}')
@@ -160,6 +164,38 @@ class Auth:
             with self.store.lock:
                 self.db.execute('DELETE FROM sessions WHERE token_hash=?', (_token_hash(token),))
                 self.db.commit()
+
+    # ---- plugin keys: only allowed to add files and check on them (see server.KEY_ROUTES) ----
+
+    def create_key(self, username, label=''):
+        kid, key = secrets.token_hex(6), KEY_PREFIX + secrets.token_urlsafe(32)
+        with self.store.lock:
+            self.db.execute('INSERT INTO api_keys VALUES (?, ?, ?, ?, ?, NULL)',
+                            (kid, _token_hash(key), username, (label or 'Browser plugin')[:60], now()))
+            self.db.commit()
+        return {'id': kid, 'key': key}
+
+    def keys(self):
+        return [{'id': r[0], 'username': r[1], 'label': r[2], 'created': r[3], 'last_used': r[4]}
+                for r in self.db.execute('SELECT id, username, label, created, last_used FROM api_keys ORDER BY created')]
+
+    def revoke_key(self, kid):
+        with self.store.lock:
+            n = self.db.execute('DELETE FROM api_keys WHERE id=?', (kid,)).rowcount
+            self.db.commit()
+        return n > 0
+
+    def key_user(self, key):
+        if not key or not key.startswith(KEY_PREFIX):
+            return None
+        row = self.db.execute('SELECT k.id, k.username FROM api_keys k JOIN users u ON u.username=k.username '
+                              'WHERE k.key_hash=?', (_token_hash(key),)).fetchone()
+        if not row:
+            return None
+        with self.store.lock:
+            self.db.execute('UPDATE api_keys SET last_used=? WHERE id=?', (now(), row[0]))
+            self.db.commit()
+        return row[1]
 
     @staticmethod
     def cookie(token, secure=False):
