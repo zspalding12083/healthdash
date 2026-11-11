@@ -12,7 +12,7 @@ DEST=${1:?usage: tools/export_public.sh DEST}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
 
-ALLOW=(README.md .gitignore healthdash tests sample docs/screenshot.jpg tools/dump_text.py tools/export_public.sh
+ALLOW=(README.md LICENSE.md .gitignore healthdash tests sample docs/screenshot.jpg tools/dump_text.py tools/export_public.sh
        deploy/install.sh deploy/sync.sh deploy/healthdash.service deploy/local.env.example)
 
 mkdir -p "$DEST"

@@ -98,3 +98,12 @@ healthdash/
 deploy/         install.sh, sync.sh, systemd unit
 sample/         made-up demo data and an example local.json
 ```
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md). You may use, change and share this for any
+noncommercial purpose: personal use, family use, hobby projects, study, and use by nonprofits,
+schools, public health organizations and government. Selling it, or using it in or for a business,
+is not allowed without written permission. For commercial use, open an issue to ask.
+
+Required Notice: Copyright 2026 zspalding12083 (https://github.com/zspalding12083)
