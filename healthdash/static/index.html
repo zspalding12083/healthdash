@@ -398,7 +398,7 @@ VIEWS.review = async () => {
   const r = await api('/api/review');
   let html = `<div class="panel"><h2>Needs review</h2><p class="muted small" style="margin-top:-6px">New files that haven't been catalogued yet, and entries that were read from hard-to-read scans. Open one, check it against the document, and save to clear the flag.</p>`;
   if(!r.documents.length && !r.records.length) return html + '<div class="empty">All caught up.</div></div>';
-  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span>${d.status==='processing'?' <span class="tag">reading…</span>':''}${d.review_note?`<div class="small" style="margin-top:3px">${esc(d.review_note.split('\n')[0])}${d.review_note.includes('\n')?' <span class="muted">(+ more)</span>':''}</div>`:''}</div>`).join('');
+  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span>${d.status==='processing'?' <span class="tag">reading…</span>':''}${d.status==='error'?' <span class="tag warn">not read yet</span>':''}${d.review_note?`<div class="small" style="margin-top:3px">${esc(d.review_note.split('\n')[0])}${d.review_note.includes('\n')?' <span class="muted">(+ more)</span>':''}</div>`:''}</div>`).join('');
   if(r.records.length) html += '<h3>Entries</h3>' + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.id)}</b> <span class="muted small">${fdate(x.date||x.start_date||'')}</span></div>`).join('');
   return html + '</div>';
 };
@@ -492,13 +492,23 @@ async function openDoc(id){
       ${d.has_file?`<p><a class="btn" href="/file/${d.id}?download=1">Download</a> <a class="btn" href="/file/${d.id}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
       <h3>Entries from this document</h3>${linked||'<p class="muted small">None.</p>'}
       <h3>Details</h3>${d.status==='processing'?'<div class="ask-box">Still reading this file. This can take a minute for scans.</div>':''}
+      ${d.duplicate_of&&d.needs_review?`<div class="row-actions" style="justify-content:flex-start;margin:-4px 0 12px"><button class="btn" data-doc="${d.duplicate_of}">Open the one already filed</button></div>`:''}
+      ${d.status==='error'?`<div class="ask-box">${esc(d.review_note||"Couldn't read this file.")}<div class="row-actions" style="justify-content:flex-start"><button class="btn primary" id="dretry">Try again</button></div></div>`:''}
       ${d.needs_review&&d.review_note?`<div class="ask-box"><b>Please check:</b><ul>${d.review_note.split('\n').map(q=>`<li>${esc(q)}</li>`).join('')}</ul><div class="small muted" style="margin-top:6px">Fix anything below that's wrong, then save.</div></div>`:''}
       <form class="edit" id="df" style="grid-template-columns:1fr">
         <label>Title<input name="title" value="${esc(d.title||'')}"></label><label>Date<input name="doc_date" value="${esc(d.doc_date||'')}" placeholder="YYYY-MM-DD"></label>
         <label>Kind<select name="category">${['hospital','office','imaging','labs','procedures','tests','eye','dental','medications','financial','legal','other'].map(c=>`<option ${c===d.category?'selected':''}>${c}</option>`).join('')}</select></label>
         <label>From<input name="facility" value="${esc(d.facility||'')}"></label>
         <label>Summary<textarea name="summary" rows="3">${esc(d.summary||'')}</textarea></label></form>
-      <div class="row-actions"><button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+      <div class="row-actions">${(d.path||'').startsWith('Uploaded/')?'<button class="btn danger" id="ddel">Delete this upload</button>':''}<button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+  if($('#ddel')) $('#ddel').onclick = async () => {
+    if(!confirm(`Delete "${d.title}" and anything that was read from it? The original file on your computer is not affected.`)) return;
+    try{ await api('/api/documents/' + id, {method:'DELETE'}); $('#dlg').close(); invalidate(); render(); }catch(e){ $('#dmsg').textContent = e.message; }
+  };
+  if($('#dretry')) $('#dretry').onclick = async () => {
+    try{ await api('/api/documents/' + id + '/retry', {method:'POST'}); $('#dlg').close(); const t = trayItem(d.orig_path||d.title); t.status('Reading and sorting…'); watchUpload(id, t); }
+    catch(e){ $('#dmsg').textContent = e.message; }
+  };
   $('#dsave').onclick = async () => {
     const fd = new FormData($('#df')); const body = Object.fromEntries(fd.entries()); body.needs_review = 0; body.review_note = null;
     try{ await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify(body)}); invalidate(); $('#dmsg').textContent = 'Saved.'; render(); }catch(e){ $('#dmsg').textContent = e.message; }
@@ -506,7 +516,8 @@ async function openDoc(id){
 }
 
 // ---------- adding records ----------
-$('#upl').onclick = () => $('#uplf').click();
+$('#upl').onclick = () => HEALTH.can_read ? $('#uplf').click() : showSetupHelp();
+checkHealth();
 $('#uplf').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
 let dragN = 0;
 addEventListener('dragenter', e => { if([...(e.dataTransfer?.types||[])].includes('Files')){ dragN++; $('#drop').classList.add('on'); } });
@@ -525,6 +536,21 @@ function trayItem(name){
       el.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = () => el.remove()); },
     remove(){ el.remove(); },
   };
+}
+let HEALTH = {can_read: true};
+async function checkHealth(){
+  try{ HEALTH = await api('/api/health'); }catch(e){ return; }
+  const b = $('#upl');
+  b.innerHTML = HEALTH.can_read ? '＋ Add records' : '＋ Add records <span title="The server can\'t read files yet">⚠</span>';
+}
+function showSetupHelp(){
+  show('<h2>The dashboard can\'t read files yet</h2>', `<p>Files you add are saved, but the server is missing the programs that read PDFs and scans (${esc(HEALTH.missing.join(', '))}).
+    Install them once on the server, and everything already added is read automatically within a minute:</p>
+    <pre class="doctext">${esc(HEALTH.fix)}</pre>
+    <p class="muted small">To check a new install: <code>python3 -m healthdash check</code></p>
+    <div class="row-actions"><button class="btn" id="upl-anyway">Add files anyway</button><button class="btn primary" id="upl-ok">OK</button></div>`);
+  $('#upl-ok').onclick = () => $('#dlg').close();
+  $('#upl-anyway').onclick = () => { $('#dlg').close(); $('#uplf').click(); };
 }
 async function uploadFiles(files){
   for(const f of files){
@@ -551,12 +577,16 @@ async function watchUpload(id, t){
     invalidate(); render();
     const what = [d.title, fdate(d.doc_date), d.facility].filter(Boolean).map(esc).join(' · ');
     const extra = d.linked.length ? ` <span class="muted">(${d.linked.length} entr${d.linked.length===1?'y':'ies'} added)</span>` : '';
-    if(d.status === 'error'){
+    if(d.status === 'error' && !HEALTH.can_read){
+      t.status("Saved. It will be read automatically once the server's PDF tools are installed.", 'ask');
+      t.actions(`<button class="btn" data-dismiss>OK</button>`);
+    }else if(d.status === 'error'){
       t.status(esc(d.review_note || "Couldn't read this file."), 'err');
       t.actions(`<button class="btn" data-doc="${id}">Open</button><button class="btn" data-dismiss>OK</button>`);
     }else if(d.needs_review){
       const n = (d.review_note||'').split('\n').filter(Boolean).length;
-      t.status(`<b>Needs your help</b> with ${n} question${n===1?'':'s'}. Best guess: ${what}`, 'ask');
+      t.status(d.duplicate_of ? `<b>Possible duplicate</b> of something already filed. Best guess: ${what}`
+                              : `<b>Needs your help</b> with ${n} question${n===1?'':'s'}. Best guess: ${what}`, 'ask');
       t.actions(`<button class="btn primary" data-doc="${id}">Answer</button><button class="btn" data-dismiss>Later</button>`);
     }else{
       t.status(`Filed: ${what}${extra}`);

@@ -25,6 +25,8 @@ push() {
     python3 -m unittest discover -s tests -t . -q
     rsync -a --delete --exclude __pycache__ --exclude '*.pyc' healthdash/ "$PI:$CODE/"
     ssh "$PI" 'sudo -n /usr/bin/systemctl restart healthdash && sleep 2 && systemctl is-active healthdash'
+    ssh "$PI" 'PYTHONPATH=/opt/healthdash python3 -m healthdash check >/tmp/healthdash-check.txt 2>&1' \
+        || { echo "WARNING: the server is missing something:"; ssh "$PI" cat /tmp/healthdash-check.txt; }
     curl -fsS --max-time 10 "$URL/api/summary" >/dev/null && echo "dashboard is up: $URL"
 }
 

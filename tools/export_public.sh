@@ -33,7 +33,7 @@ COMMON = set('''hospital medical center centre health family medicine attending 
 practice associates group radiology imaging street services urgent care emergency department
 doctor nurse office surgery surgical regional memorial community physicians specialists
 the and of for with dental eye vision lab labs laboratory network system plan insurance
-headless town illness''' .split())
+headless town illness breast''' .split())
 def add_name(s):
     add(s)
     for w in re.findall(r"[A-Za-z][A-Za-z'\-]{3,}", s or ''):

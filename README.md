@@ -41,6 +41,17 @@ Medical records are about as sensitive as data gets, so:
 - Nothing personal lives in the code: names, facilities and paths go in `data/local.json` and
   `deploy/local.env`, both git-ignored along with every PDF, scan, text cache and database.
 
+## Check an install
+
+```bash
+python3 -m healthdash check            # on the server: Python, SQLite FTS5, PDF + OCR tools
+python3 -m healthdash check --ingest   # on the machine with the records folder
+```
+
+It lists anything missing and the command that installs it. The dashboard itself also shows a
+warning on **Add records** when the server can't read files yet; files added meanwhile are kept
+and read automatically once the tools are installed.
+
 ## Try it
 
 ```bash

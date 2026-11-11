@@ -1,5 +1,6 @@
 """healthdash command line.
 
+  python3 -m healthdash check   [--ingest]                             (is everything installed?)
   python3 -m healthdash demo    [--port 9380]                          (made-up sample data)
   python3 -m healthdash serve   --db DB --port 9380 --files DIR --import-from INGEST_HOST_IP --title "Our Health"
   python3 -m healthdash ingest  [--source DIR] [--pi URL] [--dry-run]      (run where the files are)
@@ -22,6 +23,9 @@ def main(argv=None):
                    help='address allowed to import/upload (repeatable)')
     s.add_argument('--title', default=None, help='name shown at the top of the page')
 
+    c = sub.add_parser('check', help='check this machine has everything healthdash needs')
+    c.add_argument('--ingest', action='store_true', help='check the records machine instead of the server')
+
     d = sub.add_parser('demo', help='run on made-up sample data in a throwaway database')
     d.add_argument('--port', type=int, default=9380)
     d.add_argument('--host', default='127.0.0.1', help='use 0.0.0.0 to open it to the LAN')
@@ -41,6 +45,9 @@ def main(argv=None):
     if a.cmd == 'serve':
         from .server import serve
         serve(a.db, a.port, a.files, a.import_from, title=a.title or config.TITLE)
+    elif a.cmd == 'check':
+        from .doctor import main as check
+        return check('ingest' if a.ingest else 'server')
     elif a.cmd == 'demo':
         from .demo import demo
         demo(a.port, a.host)

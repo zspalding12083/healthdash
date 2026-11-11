@@ -38,7 +38,7 @@ INTEGER = {'abnormal'}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
-ADDED = {'documents': ['status TEXT', 'review_note TEXT']}  # columns added after the first release
+ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT']}  # columns added after the first release
 # A financial row whose kind mentions an estimate or quote is not a charge: no work was billed.
 ESTIMATE_SQL = "(lower(coalesce(kind,'')) LIKE '%estimate%' OR lower(coalesce(kind,'')) LIKE '%quote%')"
 
@@ -68,7 +68,8 @@ def _schema():
         text TEXT, has_file INTEGER DEFAULT 0, needs_review INTEGER DEFAULT 1,
         edited INTEGER DEFAULT 0, added TEXT, updated TEXT,
         status TEXT,                    -- 'processing' while an upload is being read, else done/error
-        review_note TEXT                -- questions for a person about this document
+        review_note TEXT,               -- questions for a person about this document
+        duplicate_of TEXT               -- an upload that looks like a copy of this document
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
         title, facility, text, content='documents', content_rowid='rowid',
@@ -167,6 +168,8 @@ class Store:
                     self.db.execute(f'ALTER TABLE {table} ADD COLUMN {c}')
         self.db.commit()
         dropped = False
+        if sqlite3.sqlite_version_info < (3, 35):  # too old to drop columns; they're just ignored
+            return
         for table, cols in DROPPED.items():
             have = {r[1] for r in self.db.execute(f'PRAGMA table_info({table})')}
             for c in cols:
@@ -372,6 +375,39 @@ class Store:
             self.db.execute(f'UPDATE documents SET {", ".join(f"{k}=?" for k in vals)} WHERE id=?',
                             [*vals.values(), did])
             self.db.commit()
+
+    def texts_except(self, did):
+        return [(r[0], r[1], r[2], r[3]) for r in self.db.execute(
+            "SELECT id, title, doc_date, text FROM documents WHERE id<>? AND coalesce(status,'done')='done'",
+            (did,))]
+
+    def lab_exists(self, row):
+        """Same test, same day, same result already recorded (from any document)?"""
+        if row.get('num') is not None:
+            q = self.db.execute('SELECT 1 FROM labs WHERE date=? AND lower(analyte)=lower(?) AND num=? LIMIT 1',
+                                (row['date'], row['analyte'], float(row['num'])))
+        else:
+            q = self.db.execute('SELECT 1 FROM labs WHERE date=? AND lower(analyte)=lower(?) AND value=? LIMIT 1',
+                                (row['date'], row['analyte'], row.get('value')))
+        return q.fetchone() is not None
+
+    def bill_exists(self, date, charged):
+        if charged is None:
+            return False
+        return self.db.execute('SELECT 1 FROM financial WHERE date IS ? AND charged=? LIMIT 1',
+                               (date, float(charged))).fetchone() is not None
+
+    def delete_upload(self, did):
+        """Remove a document added from the dashboard and the entries read from it."""
+        d = self.document(did)
+        if not d or not (d.get('path') or '').startswith('Uploaded/'):
+            return None
+        with self.lock:
+            self.db.execute('DELETE FROM documents WHERE id=?', (did,))
+            self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
+            self.db.execute("DELETE FROM financial WHERE id=? AND edited=0", (f'fin-u{did[:10]}',))
+            self.db.commit()
+        return d
 
     def known_facilities(self):
         names = set()

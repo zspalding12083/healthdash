@@ -123,6 +123,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                         return self._err(403, 'backups are only allowed from the ingest host')
                     return self._send(200, store.backup_bytes(), 'application/vnd.sqlite3',
                                       {'Content-Disposition': 'attachment; filename="health.db"'})
+                if p == ['health']:
+                    from .doctor import upload_status
+                    return self._send(200, upload_status())
                 if p == ['uploads']:
                     if not self._importer():
                         return self._err(403, 'only the ingest host can list uploads')
@@ -136,6 +139,12 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     r = store.get(p[0], p[1])
                     return self._send(200, r) if r else self._err(404, 'not found')
             if method == 'POST':
+                if len(p) == 3 and p[0] == 'documents' and p[2] == 'retry':
+                    if not uploads:
+                        return self._err(503, 'uploads are not enabled')
+                    if not uploads.retry(p[1]):
+                        return self._err(400, 'nothing to retry for this document')
+                    return self._send(202, {'id': p[1], 'status': 'processing'})
                 if p == ['upload']:
                     # from anyone on the LAN using the dashboard; the file is checked, then read
                     if not uploads:
@@ -158,6 +167,10 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if len(p) == 2 and p[0] in KINDS:
                     r = store.update(p[0], p[1], self._json())
                     return self._send(200, r) if r else self._err(404, 'not found')
+            if method == 'DELETE' and len(p) == 2 and p[0] == 'documents':
+                if not uploads or not uploads.delete(p[1]):
+                    return self._err(400, 'only files added from the dashboard can be deleted here')
+                return self._send(200, {'deleted': True})
             if method == 'DELETE' and len(p) == 2 and p[0] in KINDS:
                 return self._send(200, {'deleted': store.delete(p[0], p[1])})
             return self._err(404, 'not found')

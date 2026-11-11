@@ -31,6 +31,15 @@ ssh -t "$PI" 'set -e
     echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart healthdash" | sudo tee /etc/sudoers.d/healthdash-restart >/dev/null
     sudo chmod 440 /etc/sudoers.d/healthdash-restart
     sudo visudo -cf /etc/sudoers.d/healthdash-restart
+    # tools for reading uploaded PDFs and scans
+    if ! command -v pdftotext >/dev/null || ! command -v tesseract >/dev/null; then
+        if command -v apt-get >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils tesseract-ocr
+        else
+            echo "install poppler-utils and tesseract-ocr with your package manager"
+        fi
+    fi
+    PYTHONPATH=/opt/healthdash python3 -m healthdash check || echo "WARNING: see the check above"
     sudo install -m 644 /tmp/healthdash-install/healthdash.service /etc/systemd/system/healthdash.service
     rm -rf /tmp/healthdash-install
     sudo systemctl daemon-reload

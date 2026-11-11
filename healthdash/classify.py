@@ -4,6 +4,7 @@ Plain rules, all local. Every answer comes with whether we're sure; anything we'
 about becomes a question for a person (the document is flagged "needs review").
 """
 
+import os
 import re
 from datetime import date
 
@@ -55,6 +56,37 @@ KEYWORDS = {
               'hipaa', 'consent', 'workers compensation', "workers' compensation", 'claim number',
               'signature of', 'notary'],
 }
+
+# phrases a document uses to name itself, in its file name or its first lines
+NAMES = [
+    ('hospital', r'discharge summary|discharge instructions|emergency (department|room)|\bed (note|visit)|'
+                 r'admission (note|h&p)|history and physical|h&p|hospital course|er report|ed provider note'),
+    ('office', r'office[- ]?(clinic )?(visit|note)|clinic note|progress note|consult(ation)? note|visit (summary|note)|'
+               r'after visit summary|past visit details|follow[- ]?up visit'),
+    ('procedures', r'operative report|op(eration)? report|procedure note|surgery report|brief op note'),
+    ('imaging', r'\b(mri|mra|cta|ct|x-?ray|xr|ultrasound|us|mammogra\w*|pet|dexa|fluoro\w*)\b.{0,30}\b(report|scan|head|brain|chest|spine|'
+                r'lumbar|cervical|thoracic|abdomen|pelvis|knee|hip|shoulder|neck|breast)\b|radiology report|imaging report'),
+    ('tests', r'echocardiogram|\bekg\b|\becg\b|\beeg\b|sleep study|stress test|holter|pulmonary function|\bemg\b'),
+    ('eye', r'\beyes?\b|\boct\b|optic nerve|retina|visual field|humphrey|eye exam|ophthalm\w*|optometr\w*|glasses|contact lens'),
+    ('dental', r'dental|dentist|denture|oral surgery|orthodont\w*'),
+    ('labs', r'lab(oratory)? results?|lab report|\blabs\b|blood work|pathology report'),
+    ('medications', r'medication list|med(ication)? schedule|prescription(?! glasses)|\brx\b'),
+    ('financial', r'statement|invoice|\bbill\b|billing|estimate|quote|explanation of benefits|\beob\b|receipt'),
+    ('legal', r'authorization|release of information|health care proxy|power of attorney|consent form|'
+              r'workers.? comp\w*|claim form'),
+]
+
+
+def named_category(filename, text):
+    """(category, where) from the file name, else from the first few lines; None if neither says."""
+    base = re.sub(r'[_]+', ' ', os.path.splitext(os.path.basename(filename or ''))[0]).lower()
+    head = '\n'.join([ln for ln in (text or '').splitlines() if ln.strip()][:8]).lower()
+    for where, src in (('name', base), ('heading', head)):
+        for cat, rx in NAMES:
+            if re.search(rx, src):
+                return cat, where
+    return None, None
+
 
 _MON = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep',
                                      'oct', 'nov', 'dec'], 1)}
@@ -130,8 +162,21 @@ def _has(keys, low):
     return any(re.search(r'(?<![a-z])' + re.escape(k), low) for k in keys)
 
 
+def filename_date(filename):
+    base = os.path.splitext(os.path.basename(filename or ''))[0].replace('_', ' ')
+    found = [d for d, _, _ in find_dates(base)]
+    if found:
+        return found[0]
+    fn = catalog.guess_date(filename or '')
+    return fn if fn and len(fn) == 10 else None
+
+
 def guess_date(text, filename=''):
     """(date or None, sure)"""
+    fd = filename_date(filename)
+    if fd:
+        # named by its date: sure when the document mentions that date too
+        return fd, any(d == fd for d, _, _ in find_dates(text))
     allf = find_dates(text)
     lines = text.split('\n')
     starts = [0]
@@ -191,9 +236,15 @@ def _is_estimate(text):
     return bool(re.search(r'\b(estimate|quote|treatment plan|proposed treatment)\b', text, re.I))
 
 
-def guess_category(text, labs=0):
+def guess_category(text, labs=0, filename=''):
     """(category, sure, scores)"""
     s = score_categories(text)
+    named, where = named_category(filename, text)
+    if named == 'financial' and s['dental'] >= 2:
+        named = 'dental'
+    if named:
+        # trust what it calls itself; a heading needs some support from the text
+        return named, where == 'name' or s.get(named, 0) >= 2 or (named == 'labs' and labs >= 3), s
     narrative = s['hospital'] + s['office'] + s['procedures']
     if labs >= 3 and narrative == 0:
         return 'labs', True, s
@@ -207,6 +258,8 @@ def guess_category(text, labs=0):
     if a == 0:
         return 'other', False, s
     sure = a >= 3 and a >= 1.5 * b
+    if top == 'labs' and labs == 0:
+        sure = False  # lab words without lab values: probably a note that mentions results
     return top, sure, s
 
 
@@ -338,6 +391,39 @@ class Filed:
         return hits[0][1], sure
 
 
+def shingles(text, n=5):
+    """Runs of n words (numbers kept), for telling whether two documents say the same thing."""
+    w = re.findall(r'[a-z]{2,}|\d+', (text or '').lower())
+    return {' '.join(w[i:i + n]) for i in range(len(w) - n + 1)}
+
+
+COPY, INSIDE = 0.85, 0.85  # different lab printouts from one portal overlap up to ~0.6
+
+
+def near_duplicate(text, others):
+    """others: [(id, title, date, text)]. Returns the best match as
+    {'id', 'title', 'doc_date', 'score', 'how': 'copy' | 'inside'} or None."""
+    a = shingles(text)
+    if len(a) < 30:
+        return None
+    best = None
+    for oid, title, d, t in others:
+        b = shingles(t)
+        if len(b) < 30:
+            continue
+        common = len(a & b)
+        score = common / min(len(a), len(b))
+        if score < min(COPY, INSIDE):
+            continue
+        ratio = min(len(a), len(b)) / max(len(a), len(b))
+        how = 'copy' if ratio >= 0.7 else ('inside' if len(a) < len(b) else 'contains')
+        if how == 'contains':  # the new one is the bigger document; the old one is part of it
+            continue
+        if not best or score > best['score']:
+            best = {'id': oid, 'title': title, 'doc_date': d, 'score': round(score, 2), 'how': how}
+    return best
+
+
 def lab_rows(text, facility=None):
     rows = parsers.portal_list_labs(text, facility) + parsers.cerner_block_labs(text, facility)
     return parsers.normalize(rows)
@@ -354,7 +440,7 @@ def classify(text, filename='', known_facilities=(), filed=None):
         if f2 and not facility:
             facility, fac_sure = f2, False
     labs = lab_rows(text, facility)
-    category, cat_sure, _ = guess_category(text, len(labs))
+    category, cat_sure, _ = guess_category(text, len(labs), filename)
     doc_date, date_sure = guess_date(text, filename)
     if labs and not doc_date:
         doc_date, date_sure = labs[0]['date'], True

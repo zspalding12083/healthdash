@@ -179,5 +179,104 @@ class UploadTests(unittest.TestCase):
         self.assertIn('no tools', d['review_note'])
 
 
+class DuplicateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.files = os.path.join(self.tmp.name, 'f')
+        os.makedirs(self.files)
+        self.store = Store(os.path.join(self.tmp.name, 't.db'))
+        self.texts = {}
+        self.up = Uploads(self.store, self.files, extractor=lambda p: {'pages': [self.texts[open(p, 'rb').read()]], 'ocr_pages': []})
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add(self, data, text, name='x.pdf'):
+        self.texts[data] = text
+        sha = self.up.add(name, data)['id']
+        for _ in range(100):
+            d = self.store.document(sha)
+            if d['status'] != 'processing':
+                return d
+            time.sleep(0.05)
+
+    def test_same_text_different_file_is_flagged_and_adds_nothing(self):
+        a = self.add(b'%PDF-1 a', LAB)
+        self.assertEqual(len(self.store.list('labs')), 4)
+        b = self.add(b'%PDF-1 b (re-exported)', LAB + '\nPrinted again\n')
+        self.assertEqual(b['duplicate_of'], a['id'])
+        self.assertEqual(b['needs_review'], 1)
+        self.assertIn('looks like a copy', b['review_note'])
+        self.assertEqual(len(self.store.list('labs')), 4)  # no doubled trend points
+        self.assertTrue(self.up.delete(b['id']))
+        self.assertIsNone(self.store.document(b['id']))
+        self.assertFalse(any(f.startswith(b['id']) for f in os.listdir(self.files)))
+        self.assertFalse(self.up.delete(b['id']))
+
+    def test_lab_values_already_recorded_are_not_added_twice(self):
+        self.add(b'%PDF-1 a', LAB)
+        other = LAB.replace('Riverside General Hospital Laboratory', 'Cumulative report, other layout\n' * 30) \
+                   .replace('CREATININE       0.9', 'CREATININE       1.4')
+        self.add(b'%PDF-1 c', other)
+        labs = self.store.list('labs')
+        self.assertEqual(len(labs), 5)  # only the new creatinine value was added
+        self.assertEqual(sorted(x['num'] for x in labs if x['analyte'] == 'Creatinine'), [0.9, 1.4])
+
+    def test_different_lab_days_are_not_duplicates(self):
+        day2 = LAB.replace('04-Mar-2020', '05-Mar-2020').replace('130 H', '101  ').replace('139', '141') \
+                  .replace('4.1', '3.9').replace('0.9 ', '1.0 ')
+        self.add(b'%PDF-1 a', LAB)
+        d = self.add(b'%PDF-1 d', day2)
+        self.assertIsNone(d['duplicate_of'])
+
+    def test_only_uploads_can_be_deleted(self):
+        self.store.upsert_documents([{'id': 'orig', 'path': 'Hospital/x.pdf', 'title': 'x', 'text': 't'}])
+        self.assertFalse(self.up.delete('orig'))
+        self.assertIsNotNone(self.store.document('orig'))
+
+
+class DoctorAndRetryTests(unittest.TestCase):
+    def test_check_reports_missing_tools(self):
+        from unittest import mock
+        from healthdash import doctor
+        with mock.patch('shutil.which', return_value=None):
+            st = doctor.upload_status()
+            self.assertFalse(st['can_read'])
+            self.assertIn('poppler-utils', st['fix'])
+            self.assertIn('tesseract-ocr', st['fix'])
+            names = {n: ok for n, ok, req, _ in doctor.checks()}
+            self.assertFalse(names['tesseract (reading scans)'])
+        self.assertTrue(dict((n, ok) for n, ok, _, _ in doctor.checks())['SQLite full-text search (FTS5)'])
+
+    def test_failed_upload_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            files = os.path.join(tmp, 'f')
+            os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            state = {'tools': False}
+
+            def extract(path):
+                if not state['tools']:
+                    raise RuntimeError("the dashboard can't read files yet (missing: tesseract)")
+                return {'pages': [LAB], 'ocr_pages': []}
+            up = Uploads(store, files, extractor=extract)
+
+            def wait(sha):
+                for _ in range(100):
+                    d = store.document(sha)
+                    if d['status'] != 'processing':
+                        return d
+                    time.sleep(0.05)
+            sha = up.add('labs.pdf', b'%PDF-1 retry')['id']
+            self.assertEqual(wait(sha)['status'], 'error')
+            state['tools'] = True
+            self.assertTrue(up.retry(sha))
+            d = wait(sha)
+            self.assertEqual((d['status'], d['category']), ('done', 'labs'))
+            self.assertFalse(up.retry('nope'))
+            store.close()
+
+
 if __name__ == '__main__':
     unittest.main()
