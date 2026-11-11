@@ -32,6 +32,20 @@ SCRIPT_ROUTES = {('GET', 'summary'), ('GET', 'health'), ('GET', 'files'), ('GET'
 # 127.0.0.1, and must not read anything without signing in
 LOOPBACK_ROUTES = {('GET', 'health'), ('GET', 'files'), ('POST', 'import'), ('POST', 'files')}
 LOOPBACK = {'127.0.0.1', '::1', '::ffff:127.0.0.1'}
+# Shown with a saved portal page in the dashboard: the portal's own styles can't load (and must
+# not), so icons would draw huge and menus would push the record off screen. Not in downloads.
+READER_CSS = b"""<style id="healthdash-reader">
+html,body{background:#fff!important;color:#1d2421!important}
+body{font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif!important;max-width:900px;margin:12px auto!important;padding:0 14px!important}
+*{position:static!important;float:none!important;max-width:100%!important;box-sizing:border-box}
+svg,img,canvas,video,picture,i[class*="icon"],span[class*="icon"]{width:auto!important;height:auto!important;max-width:28px!important;max-height:28px!important}
+nav,[role="navigation"],button,select,input,textarea,.skip-link,a[href="#main"]{display:none!important}
+table{border-collapse:collapse;margin:6px 0}td,th{border:1px solid #ddd;padding:3px 7px;text-align:left;vertical-align:top}
+h1,h2,h3{line-height:1.25;margin:14px 0 6px}a{color:#256c6c}
+</style>
+"""
+
+
 # what a browser-plugin key may do: add files, see how they were filed, check it's connected
 KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health')}
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
@@ -342,6 +356,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if ext == '.html':  # a saved portal page: show it, but never run it or let it load anything
                 extra['Content-Security-Policy'] = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; "
                                                     "img-src data:; font-src data:")
+                if not download:  # readable in the dashboard; the download stays exactly as saved
+                    i = data.lower().find(b'<head>')
+                    data = data[:i + 6] + READER_CSS + data[i + 6:] if i >= 0 else READER_CSS + data
             return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
 
         def _static(self, name):

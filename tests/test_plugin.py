@@ -145,6 +145,11 @@ class PluginTests(unittest.TestCase):
             csp = r.headers['Content-Security-Policy']
         self.assertIn('sandbox', csp)
         self.assertIn("default-src 'none'", csp)
+        with urllib.request.urlopen(req) as r:
+            self.assertIn(b'healthdash-reader', r.read())       # shown readable in the dashboard
+        req = urllib.request.Request(f"{self.url}/file/{body['id']}?download=1", headers={'Cookie': f'hd_session={token}'})
+        with urllib.request.urlopen(req) as r:
+            self.assertNotIn(b'healthdash-reader', r.read())    # downloaded exactly as saved
 
     def test_empty_or_repeated_pages_are_dropped(self):
         code, body, _ = self.call('/api/upload?source=plugin&name=menu.html', b'<html><body>Home Messages</body></html>',
