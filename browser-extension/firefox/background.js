@@ -80,7 +80,10 @@ async function savePage(page, how){
     if(how === 'auto') return;
     return log({state: 'skipped', name: page.title, note: 'Already sent this page.'});
   }
-  const name = cleanName(`${portalName(page.url)} - ${page.title}`) + '.html';
+  const portal = portalName(page.url);
+  const title = (page.title || '').replace(new RegExp('^\\s*' + portal + '\\s*[-|:]\\s*', 'i'), '').trim();
+  const name = cleanName([portal, page.heading, title].filter(Boolean)
+                          .filter((x, i, a) => a.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i).join(' - ')) + '.html';
   try{
     const res = await send(name, new Blob([page.html], {type: 'text/html'}), 'text/html');
     seen.add(page.textHash);

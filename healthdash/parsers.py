@@ -285,3 +285,78 @@ def labcorp_labs(text, facility=None):
                     'unit': unit, 'ref_range': ref, 'flag': flag or (flag_for(num, ref.replace('-', ' - ')) if ref else None),
                     'facility': facility or 'LabCorp'})
     return out
+
+
+# ---- MyChart test result pages (saved by the browser plugin) ----------------------------
+# "GLUCOSE" / "Normal range: 70 - 200 mg/dL" / "Your value is 368 mg/dLThis value is Abnormal..."
+# dated by "Collected on Nov 06, 2026 5:23 PM" or "Collection date:" + "Nov 06, 2026 ...".
+_MC_YOUR = re.compile(r'Your value is\s*(.+?)(?=This value is|Normal range:|$)')
+_MC_FLAG = re.compile(r'This value is\s*(Abnormal|High|Low|Critical|Normal)', re.I)
+_MC_RANGE = re.compile(r'Normal range:\s*(.+?)(?=Your value is|This value is|$)')
+_MC_DATE = re.compile(r'(?:Collected on|Collection date:)\s*([A-Z][a-z]{2}) (\d{1,2}), (\d{4})')
+_MC_SKIP_NAME = re.compile(r'serial|machine|instrument|device|lot\b|lot #|operator|comment|interpretation', re.I)
+_MC_NOT_NAME = re.compile(r'^(view trends|value|results|new|normal range:.*|your value is.*|this value is.*|'
+                          r'compare result trends|ask a question|learn more.*|additional information|\d[\d,.]*)$', re.I)
+
+
+def mychart_labs(text, facility=None):
+    if 'Your value is' not in (text or ''):
+        return []
+    flat = re.sub(r'[ \t]+', ' ', text.replace('\f', '\n'))
+    m = _MC_DATE.search(flat.replace('\n', ' '))
+    if not m:
+        return []
+    date = datetime.strptime(' '.join(m.groups()), '%b %d %Y').strftime('%Y-%m-%d')
+    lines = [l.strip() for l in flat.splitlines() if l.strip()]
+    out, name, rng = [], None, None
+    for line in lines:
+        if 'Your value is' in line:
+            v = _MC_YOUR.search(line)
+            rm = _MC_RANGE.search(line)
+            ref = (rm.group(1).strip() if rm else rng) or None
+            if not v or not name or _MC_SKIP_NAME.search(name):
+                name, rng = None, None
+                continue
+            raw = v.group(1).strip()
+            vm = re.match(r'^([<>]=?\s*)?(-?\d[\d,]*\.?\d*)\s*(.*)$', raw)
+            unit = num = None
+            if vm:
+                num_txt = vm.group(2).replace(',', '')
+                unit = vm.group(3).strip() or None
+                try:
+                    num = None if vm.group(1) else float(num_txt)
+                except ValueError:
+                    num = None
+                if num is not None and num >= 1e6:   # an id number, not a result
+                    name, rng = None, None
+                    continue
+            ref_clean, ref_unit = None, None
+            if ref:
+                rr = re.match(r'^\s*(-?[\d.]+)\s*-\s*(-?[\d.]+)\s*(.*)$', ref)
+                if rr:
+                    ref_clean, ref_unit = f'{rr.group(1)}-{rr.group(2)}', rr.group(3).strip() or None
+                else:
+                    ref_clean = ref
+            unit = unit or ref_unit
+            word = (_MC_FLAG.search(line).group(1).lower() if _MC_FLAG.search(line) else '')
+            flag = {'high': 'H', 'low': 'L', 'critical': 'C'}.get(word)
+            if not flag and ref_clean and num is not None:
+                flag = flag_for(num, ref_clean.replace('-', ' - '))
+            if not flag and word == 'abnormal':
+                flag = 'A'
+            pretty = name.title() if name.isupper() else name
+            out.append({'date': date, 'analyte': pretty, 'value': raw, 'num': num, 'unit': unit,
+                        'ref_range': ref_clean, 'flag': flag, 'facility': facility})
+            name, rng = None, None
+        elif line.startswith('Normal range:'):
+            rm = _MC_RANGE.search(line)
+            rng = rm.group(1).strip() if rm else None
+        elif not _MC_NOT_NAME.match(line) and len(line) <= 60 and not line.endswith(':'):
+            name = line
+    seen, uniq = set(), []
+    for r in out:
+        k = (r['analyte'], r['value'])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(r)
+    return uniq

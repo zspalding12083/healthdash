@@ -16,6 +16,7 @@
     const text = (document.body?.innerText || '').trim();
     return {
       title: document.title || location.hostname,
+      heading: ((document.querySelector('main h1, h1') || {}).innerText || '').trim().slice(0, 80),
       url: location.href,
       html: '<!doctype html>\n<!-- saved from ' + location.href.replace(/--/g, '') + ' on ' + new Date().toISOString() + ' -->\n' + doc.outerHTML,
       textLength: text.length,

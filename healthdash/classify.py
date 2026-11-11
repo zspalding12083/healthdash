@@ -11,7 +11,7 @@ from datetime import date
 from . import catalog, parsers
 
 # bump when the sorting rules change: uploads nobody has answered yet are sorted again
-VERSION = '2026-11-11.6'
+VERSION = '2026-11-11.7'
 
 CATEGORIES = ['hospital', 'office', 'imaging', 'labs', 'procedures', 'tests', 'eye', 'dental',
               'medications', 'financial', 'legal', 'other']
@@ -472,7 +472,7 @@ def near_duplicate(text, others):
 
 def lab_rows(text, facility=None):
     rows = (parsers.portal_list_labs(text, facility) + parsers.cerner_block_labs(text, facility)
-            + parsers.labcorp_labs(text, facility))
+            + parsers.labcorp_labs(text, facility) + parsers.mychart_labs(text, facility))
     return parsers.normalize(rows)
 
 
@@ -492,6 +492,9 @@ def classify(text, filename='', known_facilities=(), filed=None):
     if labs and not doc_date:
         doc_date, date_sure = labs[0]['date'], True
     title = guess_title(text, category, filename)
+    if category == 'labs' and labs and title in ('Lab results', catalog.guess_title(filename or 'Document')):
+        names = list(dict.fromkeys(r['analyte'] for r in labs))
+        title = 'Lab results: ' + ', '.join(names[:3]) + (f' and {len(names) - 3} more' if len(names) > 3 else '')
     money = None
     if category == 'financial' or (category == 'dental' and _is_estimate(text)):
         amount, amount_sure = find_amount(text)

@@ -254,6 +254,10 @@ def html_text(data):
                 self.pre += tag == 'pre'
             elif tag in ('td', 'th'):
                 self.out.append(CELL)
+            elif tag == 'img':  # a logo's description often names the practice
+                alt = dict(attrs).get('alt') or ''
+                if 3 <= len(alt) <= 120 and not self.skip:
+                    self.out.append('\n' + alt.strip() + '\n')
 
         def handle_endtag(self, tag):
             if tag in self.SKIP and self.skip:
