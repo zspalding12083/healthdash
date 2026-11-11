@@ -153,6 +153,13 @@ class Uploads:
             title=r['title'], doc_date=r['doc_date'], category=r['category'], facility=r['facility'],
             status='done', needs_review=bool(questions), review_note='\n'.join(questions) or None,
             duplicate_of=dup['id'] if dup else None, classified=classify.VERSION)
+        if d.get('ext') == '.html' and not reuse_text:
+            # a page saved before it finished loading is replaced by the fuller save
+            new = classify.shingles(text)
+            for oid, otext in self.store.plugin_pages(sha):
+                old = classify.shingles(otext)
+                if len(old) >= 10 and len(new) > len(old) and len(old & new) / len(old) >= 0.9:
+                    self.delete(oid)
         if dup and dup['how'] == 'copy':
             return r  # nothing new to add from a copy
         new_labs = [row for row in r['labs'] if not self.store.lab_exists(row)]

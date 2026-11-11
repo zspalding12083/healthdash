@@ -11,7 +11,7 @@ from datetime import date
 from . import catalog, parsers
 
 # bump when the sorting rules change: uploads nobody has answered yet are sorted again
-VERSION = '2026-11-11.7'
+VERSION = '2026-11-11.8'
 
 CATEGORIES = ['hospital', 'office', 'imaging', 'labs', 'procedures', 'tests', 'eye', 'dental',
               'medications', 'financial', 'legal', 'other']
@@ -295,9 +295,19 @@ def _count(word, low):
     return len(re.findall(r'\b' + re.escape(word.lower()) + r'\b', low))
 
 
+VISIT_HEADER = re.compile(r'^\s*with [^\n]{2,80}? at ([A-Z][^\n]{3,80}?)\s*-?\s*$', re.M)
+
+
 def guess_facility(text, known):
     """Match against facilities already in the records. (name or None, sure)"""
     low = text.lower()
+    m = VISIT_HEADER.search('\n'.join(text.splitlines()[:40]))  # MyChart: "with Dr X at Some Clinic - Town"
+    if m:
+        place = m.group(1).strip(' -')
+        for name in known:
+            if name and looks_like_place(name) and re.sub(r'\s*\(.*?\)', '', name).strip().lower() == place.lower():
+                return name, True
+        return place, True
     top = '\n'.join(low.splitlines()[:25])
     for name, rx in LAB_VENDORS:
         if re.search(rx, top) or (len(low) < 25000 and re.search(rx, low)):

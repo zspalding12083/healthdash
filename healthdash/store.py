@@ -400,6 +400,12 @@ class Store:
         return self.db.execute('SELECT 1 FROM financial WHERE date IS ? AND charged=? LIMIT 1',
                                (date, float(charged))).fetchone() is not None
 
+    def plugin_pages(self, except_id):
+        """Saved portal pages nobody has saved by hand: (id, text)."""
+        return [(r[0], r[1]) for r in self.db.execute(
+            "SELECT id, text FROM documents WHERE ext='.html' AND path LIKE 'Uploaded/%' AND person_edited=0 "
+            "AND coalesce(status,'done')='done' AND id<>?", (except_id,))]
+
     def clear_upload_entries(self, did):
         """Entries read from an upload (not edited by a person), before reading it again."""
         with self.lock:

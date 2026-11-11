@@ -162,6 +162,19 @@ class PluginTests(unittest.TestCase):
         self.assertIsNone(self.wait(second['id']))   # same page again: dropped instead of asking
         self.assertIsNotNone(self.store.document(first['id']))
 
+    def test_fuller_save_replaces_partial_one(self):
+        head = b'<html><body><h1>Telephone visit</h1><p>with Dr Sample at Riverside Eye Center - Springfield</p>'
+        partial = head + b'<p>' + b'Visit summary header text. ' * 15 + b'</p><p>Loading...</p></body></html>'
+        full = head + b'<p>' + b'Visit summary header text. ' * 15 + b'</p><p>' + \
+            b'Plan: return in three months for a pressure check and new glasses fitting. ' * 8 + b'</p></body></html>'
+        a = self.call('/api/upload?source=plugin&name=p1.html', partial, 'POST', self.key)[1]['id']
+        self.wait(a)
+        self.assertIsNotNone(self.store.document(a))
+        b = self.call('/api/upload?source=plugin&name=p2.html', full, 'POST', self.key)[1]['id']
+        d = self.wait(b)
+        self.assertIsNone(self.store.document(a))          # the partial save is gone
+        self.assertEqual(d['facility'], 'Riverside Eye Center - Springfield')   # from the visit header
+
     def test_removing_an_account_removes_its_keys(self):
         self.auth.add_user('bob', 'password2')
         self.auth.remove_user('ann')
