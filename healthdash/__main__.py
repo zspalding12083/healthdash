@@ -2,6 +2,7 @@
 
   python3 -m healthdash service install|status|uninstall [--port] [--lan] [--title]   (macOS)
   python3 -m healthdash user list|add|passwd|remove [NAME] --db DB    (accounts, from a terminal)
+  python3 -m healthdash wipe    --db DB --files DIR [--yes]           (empty all records; keeps accounts)
   python3 -m healthdash check   [--ingest]                             (is everything installed?)
   python3 -m healthdash demo    [--port 9380]                          (made-up sample data)
   python3 -m healthdash serve   --db DB --port 9380 --files DIR --import-from INGEST_HOST_IP --title "Our Health"
@@ -38,6 +39,10 @@ def main(argv=None):
     u.add_argument('name', nargs='?')
     u.add_argument('--db', required=True, help='the dashboard database file')
 
+    w = sub.add_parser('wipe', help='empty every record and stored file to start over (keeps accounts)')
+    w.add_argument('--db', required=True, help='the dashboard database file')
+    w.add_argument('--files', required=True, help='the dashboard files folder')
+    w.add_argument('--yes', action='store_true', help='do not ask to type WIPE')
     c = sub.add_parser('check', help='check this machine has everything healthdash needs')
     c.add_argument('--ingest', action='store_true', help='check the records machine instead of the server')
 
@@ -67,6 +72,9 @@ def main(argv=None):
         return macos.status() if a.action == 'status' else macos.uninstall()
     elif a.cmd == 'user':
         return users_cli(a.action, a.name, a.db)
+    elif a.cmd == 'wipe':
+        from .wipe import wipe
+        return wipe(a.db, a.files, yes=a.yes)
     elif a.cmd == 'check':
         from .doctor import main as check
         return check('ingest' if a.ingest else 'server')
