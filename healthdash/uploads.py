@@ -258,10 +258,12 @@ class Uploads:
                 for k, m in meds.items():
                     if k not in listed and not m.get('gone') and not m.get('end_date') and m.get('status') == 'active':
                         m['gone'] = when((xsha, name, doc))
-            if given and enc and enc[-1]['docs'] == [xsha]:
+            if given:
                 names = list(dict.fromkeys(ccda.drug_key(g).title() for g in given))
-                enc[-1]['summary'] = ((enc[-1].get('summary') or '') + ' Medicines given during the stay: '
-                                      + ', '.join(names[:25]) + ('…' if len(names) > 25 else '') + '.').strip()
+                note = 'Medicines given during the stay: ' + ', '.join(names[:25]) + ('…' if len(names) > 25 else '') + '.'
+                docs[-1]['summary'] += ' ' + note
+                if enc and enc[-1]['docs'] == [xsha]:
+                    enc[-1]['summary'] = ((enc[-1].get('summary') or '') + ' ' + note).strip()
             for p in doc['problems']:
                 probs[p['name'].lower()] = dict(p, docs=[xsha])
             for a in doc['allergies']:
@@ -360,6 +362,14 @@ class Uploads:
             cond_rows.append({'id': rid, 'docs': list(dict.fromkeys((old.get('docs') or []) + p['docs']))[:40],
                               'name': p['name'], 'status': p['status'], 'first_noted': min(dates) if dates else None})
         existing_a = {a['id']: a for a in self.store.list('allergies')}
+        vague = re.compile(r'^\s*(unknown|unk|not known|none|n/?a|other|see (note|comment)s?|pt cannot remember|patient (can ?not|does not) (remember|recall)|severe|moderate|mild)\s*\.?\s*$', re.I)
+
+        def reaction(new, old):
+            if not new or vague.match(new):
+                return old or new
+            if not old or vague.match(old) or new.lower() in old.lower():
+                return new if not old or vague.match(old) else old
+            return f'{old}; {new}' if old.lower() not in new.lower() else new
 
         def first_word(x):
             w = re.findall(r'[a-z]{5,}', (x or '').lower())
@@ -373,7 +383,7 @@ class Uploads:
                 continue
             old = existing_a.get(rid) or {}
             all_rows.append({'id': rid, 'docs': list(dict.fromkeys((old.get('docs') or []) + a['docs']))[:40],
-                             'substance': a['substance'], 'reaction': a.get('reaction') or old.get('reaction')})
+                             'substance': a['substance'], 'reaction': reaction(a.get('reaction'), old.get('reaction'))})
             existing_a[rid] = all_rows[-1]
         proc_rows = []
         have_proc = {(x['name'] or '').lower() for x in self.store.list('procedures')}

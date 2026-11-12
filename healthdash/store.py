@@ -438,9 +438,26 @@ class Store:
         period of use: lines of the same drug less than gap_days apart become one entry."""
         from datetime import date as D, timedelta
         rows = [r for r in self.list('medications') if (r['id'] or '').startswith('ccda-') and not r.get('edited')]
+        # "generic (Brand 10 mg)" teaches that Brand is that generic
+        alias = {}
+        for r in rows:
+            m = re.match(r'\s*([^()]+?)\s*\(\s*([A-Za-z][A-Za-z-]{2,})', r['name'] or '')
+            if m:
+                g, b = drug_key(m.group(1)), m.group(2).lower()
+                if g and b != g and drug_key(b) == b:
+                    alias.setdefault(b, g)
+        key_of = lambda name: alias.get(drug_key(name), drug_key(name))
         groups = {}
         for r in rows:
-            groups.setdefault(drug_key(r['name']), []).append(r)
+            groups.setdefault(key_of(r['name']), []).append(r)
+        # when each line was last seen: an active line is known to go on at least that long
+        doc_dates = {}
+        ids = list({x for r in rows for x in r['docs']})
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for did, dd in self.db.execute(f"SELECT id, doc_date FROM documents WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                if dd and dd[:4] >= '1950':
+                    doc_dates[did] = dd[:10]
 
         def d(v):
             try:
@@ -448,12 +465,24 @@ class Store:
                     D.fromisoformat(v + '-01') if len(v or '') == 7 else D.fromisoformat(v + '-01-01') if len(v or '') == 4 else None)
             except ValueError:
                 return None
+        def seen(r):
+            ds = [d(doc_dates[x]) for x in r['docs'] if x in doc_dates]
+            return max([x for x in ds if x] or [None], key=lambda x: x or D.min)
+
+        def until(r):   # the latest date this line tells us about
+            e = d(r['end_date'])
+            if e:
+                return e
+            s, last = d(r['start_date']), seen(r)
+            if r['status'] == 'active' and last and (not s or last > s):
+                return last
+            return s
         merged = []
         for key, items in groups.items():
             items.sort(key=lambda r: (d(r['start_date']) or D.max, r['updated'] or ''))
             episodes = []
             for r in items:
-                s, e = d(r['start_date']), d(r['end_date']) or d(r['start_date'])
+                s, e = d(r['start_date']), until(r)
                 if episodes and (s is None or episodes[-1]['end'] is None or s <= episodes[-1]['end'] + timedelta(days=gap_days)):
                     ep = episodes[-1]
                     ep['rows'].append(r)
@@ -462,8 +491,12 @@ class Store:
                 else:
                     episodes.append({'start': s, 'end': e, 'rows': [r]})
             for ep in episodes:
-                last = max(ep['rows'], key=lambda r: (d(r['start_date']) or D.min, r['updated'] or ''))
+                # the newest word on it decides: a stop on 3/24 beats a list from 3/16 that shows it
+                last = max(ep['rows'], key=lambda r: (until(r) or D.min, r['status'] == 'stopped',
+                                                      d(r['start_date']) or D.min, r['id']))
                 active = last['status'] == 'active' and not last['end_date']
+                known = lambda f: last[f] or next((r[f] for r in sorted(ep['rows'], key=lambda r: until(r) or D.min, reverse=True)
+                                                   if r[f]), None)
                 docs = []
                 for r in ep['rows']:
                     docs += [x for x in r['docs'] if x not in docs]
@@ -472,9 +505,9 @@ class Store:
                 ends = [r['end_date'] for r in ep['rows'] if r['end_date']]
                 n = len(ep['rows'])
                 merged.append({'id': record_id('med', key, first), 'docs': docs[:40], 'name': last['name'],
-                               'dose': last['dose'], 'schedule': last['schedule'], 'purpose': last['purpose'],
+                               'dose': known('dose'), 'schedule': known('schedule'), 'purpose': known('purpose'),
                                'start_date': first, 'end_date': None if active else (max(ends) if ends else last['start_date']),
-                               'status': 'active' if active else 'stopped', 'prescriber': last['prescriber'],
+                               'status': 'active' if active else 'stopped', 'prescriber': known('prescriber'),
                                'notes': (f'Listed {n} times in the records' + (f' ({first} to {max(ends + starts)})' if starts else '') + '. '
                                          if n > 1 else '') + (last['notes'] or '')})
         keep = {m['id'] for m in merged}

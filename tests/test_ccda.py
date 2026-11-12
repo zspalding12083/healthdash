@@ -153,5 +153,39 @@ class CcdaTests(unittest.TestCase):
             store.close()
 
 
+
+class MergeOrderTests(unittest.TestCase):
+    """The same records imported in either order end up the same. Made-up data."""
+
+    def run_lines(self, order):
+        import tempfile
+        from healthdash.store import Store
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        s = Store(os.path.join(tmp.name, 'h.db'))
+        self.addCleanup(s.close)
+        s.upsert_documents([{'id': 'd1', 'path': 'a', 'doc_date': '2024-06-01', 'needs_review': False},
+                            {'id': 'd2', 'path': 'b', 'doc_date': '2025-03-16', 'needs_review': False},
+                            {'id': 'd3', 'path': 'c', 'doc_date': '2025-03-24', 'needs_review': False}])
+        lines = {
+            'early': {'id': 'ccda-med-1', 'docs': ['d1'], 'name': 'Examplitide (Fakeza 2 mg)', 'dose': '2 mg',
+                      'start_date': '2024-02-14', 'status': 'active'},
+            'list': {'id': 'ccda-med-2', 'docs': ['d2'], 'name': 'examplitide (Fakeza 2 mg)', 'dose': None,
+                     'start_date': '2024-02-14', 'status': 'active'},
+            'stop': {'id': 'ccda-med-3', 'docs': ['d3'], 'name': 'Fakeza', 'dose': '2 mg',
+                     'start_date': '2024-05-01', 'end_date': '2025-03-24', 'status': 'stopped'},
+        }
+        for k in order:
+            s.upsert_imported('medications', [lines[k]])
+            s.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        return [(m['start_date'], m['end_date'], m['status'], m['dose']) for m in s.list('medications')]
+
+    def test_medication_period_is_the_same_in_any_order(self):
+        want = [('2024-02-14', '2025-03-24', 'stopped', '2 mg')]
+        self.assertEqual(self.run_lines(['early', 'list', 'stop']), want)
+        self.assertEqual(self.run_lines(['stop', 'list', 'early']), want)
+        self.assertEqual(self.run_lines(['list', 'stop', 'early']), want)
+
+
 if __name__ == '__main__':
     unittest.main()
