@@ -142,6 +142,11 @@ class _LockedDB:
         setattr(self._conn, name, value)
 
 
+# words a medication line can start with that aren't a drug
+NOT_DRUGS = {'misc', 'miscellaneous', 'med', 'meds', 'medication', 'patient', 'pill', 'unable', 'unlisted',
+             'historical', 'other', 'anes', 'rdna', 'apap', 'otc', 'generic', 'unknown'}
+
+
 class Store:
     def __init__(self, path):
         self.path = path
@@ -438,15 +443,44 @@ class Store:
         period of use: lines of the same drug less than gap_days apart become one entry."""
         from datetime import date as D, timedelta
         rows = [r for r in self.list('medications') if (r['id'] or '').startswith('ccda-') and not r.get('edited')]
-        # "generic (Brand 10 mg)" teaches that Brand is that generic
-        alias = {}
+        # "generic (Brand 10 mg)" teaches that Brand is that generic; learned names are kept,
+        # because once merged the "generic (Brand)" line may be gone
+        def base_key(name):   # "Misc Med (EXAMPLAMATE 100MG)" is examplamate
+            k = drug_key(name)
+            if k in NOT_DRUGS:
+                inner = re.search(r'\(([^()]+)', name or '')
+                k2 = drug_key(inner.group(1)) if inner else ''
+                return k2 if k2 and k2 not in NOT_DRUGS else k
+            return k
+        generic_words = {base_key(m.group(1)) for r in rows
+                         for m in [re.match(r'\s*([^()]+?)\s*\(', r['name'] or '')] if m}
+        ok = lambda b, g: (b != g and len(g) >= 4 and len(b) >= 4 and b not in NOT_DRUGS and g not in NOT_DRUGS
+                           and b not in generic_words and drug_key(b) == b)
+        self.db.execute('CREATE TABLE IF NOT EXISTS drug_alias (brand TEXT PRIMARY KEY, generic TEXT)')
+        alias = {b: g for b, g in self.db.execute('SELECT brand, generic FROM drug_alias')
+                 if b != g and b not in NOT_DRUGS and g not in NOT_DRUGS}
+        pairs = set()
         for r in rows:
             m = re.match(r'\s*([^()]+?)\s*\(\s*([A-Za-z][A-Za-z-]{2,})', r['name'] or '')
             if m:
-                g, b = drug_key(m.group(1)), m.group(2).lower()
-                if g and b != g and drug_key(b) == b:
-                    alias.setdefault(b, g)
-        key_of = lambda name: alias.get(drug_key(name), drug_key(name))
+                pairs.add((m.group(2).lower(), base_key(m.group(1))))
+        for b, g in sorted(pairs):
+            if (g, b) in pairs:   # written both ways round ("A (B)" and "B (A)"): one drug, joined one way
+                b, g = max(b, g), min(b, g)
+                fits = b != g and b not in NOT_DRUGS and g not in NOT_DRUGS
+            else:
+                fits = ok(b, g)
+            if fits and b not in alias:
+                alias[b] = g
+                self.db.execute('INSERT OR IGNORE INTO drug_alias VALUES (?, ?)', (b, g))
+
+        def key_of(name):
+            k = base_key(name)
+            for _ in range(3):   # follow brand -> generic, never round in circles
+                if k not in alias or alias[k] == k:
+                    break
+                k = alias[k]
+            return k
         groups = {}
         for r in rows:
             groups.setdefault(key_of(r['name']), []).append(r)
@@ -503,13 +537,14 @@ class Store:
                 starts = [r['start_date'] for r in ep['rows'] if r['start_date']]
                 first = min(starts) if starts else None
                 ends = [r['end_date'] for r in ep['rows'] if r['end_date']]
-                n = len(ep['rows'])
+                n = max(len(docs), len(ep['rows']))   # documents that list it (a merged entry keeps them all)
                 merged.append({'id': record_id('med', key, first), 'docs': docs[:40], 'name': last['name'],
                                'dose': known('dose'), 'schedule': known('schedule'), 'purpose': known('purpose'),
                                'start_date': first, 'end_date': None if active else (max(ends) if ends else last['start_date']),
                                'status': 'active' if active else 'stopped', 'prescriber': known('prescriber'),
                                'notes': (f'Listed {n} times in the records' + (f' ({first} to {max(ends + starts)})' if starts else '') + '. '
-                                         if n > 1 else '') + (last['notes'] or '')})
+                                         if n > 1 else '') + re.sub(r'^(Listed \d+ times in the records[^.]*\.\s*)+', '',
+                                                                    last['notes'] or '')})
         keep = {m['id'] for m in merged}
         with self.lock:
             for r in rows:
@@ -594,6 +629,24 @@ class Store:
             self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
             self.db.commit()
         return d
+
+    def placeholder_dates(self):
+        """Older imports took 1/1/1900 ("no date" in some portals) as a real date. Removes the
+        visits made from it (unless a person edited them) and returns the export uploads to read
+        again."""
+        with self.lock:
+            gone = self.db.execute("DELETE FROM encounters WHERE id LIKE 'ccda-%' AND edited=0 "
+                                   "AND date IS NOT NULL AND date <= '1900-12-31'").rowcount
+            docs = [r[0] for r in self.db.execute(
+                "SELECT id FROM documents WHERE doc_date IS NOT NULL AND doc_date <= '1900-12-31'")]
+            if docs:
+                self.db.execute(f"UPDATE documents SET doc_date=NULL WHERE id IN ({','.join('?' * len(docs))}) "
+                                "AND edited=0", docs)
+            again = [r[0] for r in self.db.execute(
+                f"SELECT id FROM documents WHERE id IN ({','.join('?' * len(docs))}) AND path LIKE 'Uploaded/%' "
+                "AND person_edited=0 AND ext IN ('.zip', '.xml')", docs)] if docs else []
+            self.db.commit()
+        return gone, again
 
     def stale_uploads(self, version):
         """Uploads sorted by older rules that no person has touched yet."""

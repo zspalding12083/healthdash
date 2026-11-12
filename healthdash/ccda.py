@@ -60,6 +60,8 @@ def _date(v):
     if not m:
         return None
     y, mo, d = m.groups()
+    if int(y) <= 1900:   # 1/1/1900 is how some portals write "no date"
+        return None
     return '-'.join(p for p in (y, mo, d) if p)
 
 
@@ -167,6 +169,8 @@ def parse(data):
             'provider': ' '.join(_t(p) for p in who) if who is not None else None,
         }
         out['facility'] = out['visit']['facility'] or out['facility']
+        if not out['visit']['date'] and not out['visit']['end_date']:
+            out['visit'] = None   # a summary of the whole history, not of one visit
 
     for sec in root.iter(N + 'section'):
         code = sec.find(N + 'code')

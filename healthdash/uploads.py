@@ -63,6 +63,8 @@ class Uploads:
                 self.q.put(d['id'])
         for sha in store.stale_uploads(classify.VERSION):  # sorting rules improved: sort again
             self.q.put(('resort', sha))
+        for sha in store.placeholder_dates()[1]:          # read with 1/1/1900 taken as a real date
+            self.q.put(('resort', sha))
         if recheck and not extractor:
             threading.Thread(target=self._recheck, args=(recheck,), daemon=True, name='uploads-recheck').start()
 
@@ -345,8 +347,11 @@ class Uploads:
             if m.get('gone') and not end:
                 status, end = 'stopped', m['gone']
                 notes = f"Not on the medication list at the {m['gone']} visit (last listed {m['last_seen']})."
+            name = m['name']
+            if re.match(r'\s*unable to find\b', name, re.I):   # the clinic's system had no name for it
+                name = 'Unnamed medicine (not in the clinic\'s drug list)'
             med_rows.append({'id': ccda.record_ids('med', m['name'], m.get('start_date')), 'docs': m['docs'],
-                             'name': m['name'], 'dose': m.get('dose'), 'schedule': m.get('schedule'),
+                             'name': name, 'dose': m.get('dose'), 'schedule': m.get('schedule'),
                              'start_date': m.get('start_date') or m['first'], 'end_date': end, 'status': status,
                              'notes': notes or ('Start date is when it first appears in this export.' if not m.get('start_date') else None)})
         # problems and allergies: an earlier onset date or a known reaction is never lost to a later file
@@ -386,7 +391,9 @@ class Uploads:
                              'substance': a['substance'], 'reaction': reaction(a.get('reaction'), old.get('reaction'))})
             existing_a[rid] = all_rows[-1]
         proc_rows = []
-        have_proc = {(x['name'] or '').lower() for x in self.store.list('procedures')}
+        old_procs = self.store.list('procedures')
+        have_proc = {(x['name'] or '').lower() for x in old_procs}
+        old_place = {x['id']: x['facility'] for x in old_procs if x.get('facility')}
         for p in procs.values():
             if not p.get('date') and any(h.startswith(p['name'].lower()[:10]) for h in have_proc):
                 continue   # an undated history item already listed
@@ -394,8 +401,9 @@ class Uploads:
             if same:
                 links.append(('procedures', same[0]['id'], p['docs'][0]))
                 continue
-            proc_rows.append({'id': ccda.record_ids('proc', p['name'], p.get('date')), 'docs': p['docs'],
-                              'date': p.get('date'), 'name': p['name'], 'facility': p.get('facility'),
+            pid = ccda.record_ids('proc', p['name'], p.get('date'))
+            proc_rows.append({'id': pid, 'docs': p['docs'],
+                              'date': p.get('date'), 'name': p['name'], 'facility': old_place.get(pid) or p.get('facility'),
                               'provider': p.get('provider')})
         for kind, rid, did in links:
             self.store.link_doc(kind, rid, did)

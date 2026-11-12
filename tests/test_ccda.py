@@ -58,6 +58,30 @@ class CcdaTests(unittest.TestCase):
         self.assertEqual((d['allergies'][0]['substance'], d['allergies'][0]['reaction']), ('Sampleillin', 'Hives'))
         self.assertIn('Diabetes follow-up', ccda.page(d))
 
+    def test_placeholder_1900_date_makes_no_visit(self):
+        doc = DOC.replace(b'<low value="20200304100000-0500"/>',
+                          b'<low value="19000101120000-0500"/><high value="19000101120000-0500"/>')
+        d = ccda.parse(doc)
+        self.assertIsNone(d['visit'])
+        self.assertEqual(d['doc_date'], '2020-03-04')                   # dated when it was made
+        self.assertEqual(d['medications'][0]['start_date'], '2019-01-01')   # real dates kept
+        self.assertIsNone(ccda._date('19000101'))
+
+    def test_old_1900_visit_is_cleaned_up(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        s = Store(os.path.join(tmp.name, 'h.db'))
+        self.addCleanup(s.close)
+        s.upsert_documents([{'id': 'u1', 'path': 'Uploaded/export.xml', 'ext': '.xml', 'doc_date': '1900-01-01',
+                             'needs_review': False},
+                            {'id': 'p1', 'path': 'Imported/x/page.html', 'doc_date': '1900-01-01', 'needs_review': False}])
+        s.upsert_imported('encounters', [{'id': 'ccda-visit-1', 'date': '1900-01-01', 'docs': ['p1']},
+                                         {'id': 'ccda-visit-2', 'date': '2020-01-01', 'docs': ['p1']}])
+        self.assertEqual(s.placeholder_dates(), (1, ['u1']))
+        self.assertEqual([e['id'] for e in s.list('encounters')], ['ccda-visit-2'])
+        self.assertIsNone(s.document('p1')['doc_date'])
+        self.assertEqual(s.placeholder_dates(), (0, []))     # once only
+
     def test_cerner_style_procedures_and_links_to_existing_entries(self):
         doc = DOC.replace(b'<code code="99213"><originalText>Office Visit</originalText></code>', b'')
         doc = doc.replace(b'<effectiveTime><low value="20200304100000-0500"/></effectiveTime>',
@@ -178,7 +202,30 @@ class MergeOrderTests(unittest.TestCase):
         for k in order:
             s.upsert_imported('medications', [lines[k]])
             s.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        once = [{f: v for f, v in m.items() if f != 'updated'} for m in s.list('medications')]
+        for _ in range(2):   # running it again changes nothing, though the brand line is merged away
+            s.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        self.assertEqual([{f: v for f, v in m.items() if f != 'updated'} for m in s.list('medications')], once)
         return [(m['start_date'], m['end_date'], m['status'], m['dose']) for m in s.list('medications')]
+
+    def test_placeholder_words_are_not_drugs(self):
+        import tempfile
+        from healthdash.store import Store
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        s = Store(os.path.join(tmp.name, 'h.db'))
+        self.addCleanup(s.close)
+        s.upsert_imported('medications', [
+            {'id': 'ccda-med-1', 'docs': [], 'name': 'Misc Med (EXAMPLAMATE 100MG TABLETS)', 'start_date': '2020-01-01', 'status': 'active'},
+            {'id': 'ccda-med-2', 'docs': [], 'name': 'examplamate 200 MG Oral Tablet', 'start_date': '2020-02-01', 'status': 'active'},
+            {'id': 'ccda-med-3', 'docs': [], 'name': 'Misc Med (FAKEPRIL 5MG)', 'start_date': '2020-01-01', 'status': 'active'},
+            {'id': 'ccda-med-4', 'docs': [], 'name': 'sampledol (Brandol) 5 MG', 'start_date': '2020-01-01', 'status': 'active'},
+            {'id': 'ccda-med-5', 'docs': [], 'name': 'Brandol 5 MG', 'start_date': '2020-02-01', 'status': 'active'},
+            {'id': 'ccda-med-6', 'docs': [], 'name': 'Brandol (sampledol 5 mg)', 'start_date': '2020-03-01', 'status': 'active'}])
+        s.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        names = sorted(m['name'] for m in s.list('medications'))
+        self.assertEqual(len(names), 3, names)    # examplamate, fakepril, sampledol: misc joins nothing
+        self.assertNotIn('misc', {b for b, g in s.db.execute('SELECT * FROM drug_alias')} | {g for b, g in s.db.execute('SELECT * FROM drug_alias')})
 
     def test_medication_period_is_the_same_in_any_order(self):
         want = [('2024-02-14', '2025-03-24', 'stopped', '2 mg')]
