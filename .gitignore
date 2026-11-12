@@ -25,6 +25,7 @@ deploy/local.env
 !docs/medications.png
 !docs/lab-trends.png
 !docs/needs-review.png
+!docs/social-preview.png
 dist/
 # the plugin's own icons (not records)
 !browser-extension/firefox/icon-*.png

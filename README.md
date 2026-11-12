@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" width="112" alt="healthdash logo"></p>
+
 # healthdash
 
 Self-hosted personal health record dashboard. Import MyChart and other patient portal exports,
@@ -55,7 +57,8 @@ Everything runs on your own machine. Nothing is sent to any outside service, API
 |---|---|---|
 | ![Medications tab, demo data](docs/medications.png) | ![Lab trends tab, demo data](docs/lab-trends.png) | ![Needs review tab, demo data](docs/needs-review.png) |
 
-All screenshots use the made-up demo data (`python3 -m healthdash demo`).
+All screenshots use the made-up demo data (`python3 -m healthdash demo`). `docs/social-preview.png` is the
+image GitHub shows when the repository link is shared.
 
 ## What it does not do
 
