@@ -43,6 +43,13 @@ ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', '
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
 
 
+def _combo(k):
+    """A combination drug is the same whichever ingredient comes first: "oxycodone-acetaminophen"
+    and "acetaminophen-oxycodone" -> "acetaminophen-oxycodone"."""
+    parts = (k or '').split('-')
+    return '-'.join(sorted(parts)) if len(parts) > 1 and all(len(p) >= 3 for p in parts) else k
+
+
 def _squash(name):
     """A place name for comparing: lower case, single spaces."""
     return re.sub(r'\s+', ' ', str(name or '')).strip().lower()
@@ -601,8 +608,8 @@ class Store:
             if k in NOT_DRUGS:
                 inner = re.search(r'\(([^()]+)', name or '')
                 k2 = drug_key(inner.group(1)) if inner else ''
-                return k2 if k2 and k2 not in NOT_DRUGS else k
-            return k
+                return _combo(k2) if k2 and k2 not in NOT_DRUGS else k
+            return _combo(k)
         generic_words = {base_key(m.group(1)) for r in rows
                          for m in [re.match(r'\s*([^()]+?)\s*\(', r['name'] or '')] if m}
         ok = lambda b, g: (b != g and len(g) >= 4 and len(b) >= 4 and b not in NOT_DRUGS and g not in NOT_DRUGS
@@ -758,7 +765,7 @@ class Store:
             if k in NOT_DRUGS:
                 inner = re.search(r'\(([^()]+)', name or '')
                 k = drug_key(inner.group(1)) if inner else k
-            return root(k)
+            return root(_combo(k))
         return key, root, parent
 
     def merge_med_sources(self, slack_days=60):

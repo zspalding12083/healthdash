@@ -247,6 +247,10 @@ class CcdaTests(unittest.TestCase):
                 {"id": "ccda-med-c", "name": "Fakeazole 500 MG", "start_date": "2021-01-01", "status": "active"},
             ])
             self.assertEqual(store.merge_med_sources(), 1)          # the 2010 course is another period
+            store.upsert_imported("medications", [
+                {"id": "med-combo", "name": "Samplocodone-acetaminophen (Brandocet)", "start_date": "2020-03-02", "end_date": "2020-03-04", "status": "stopped"},
+                {"id": "ccda-med-d", "name": "acetaminophen-samplocodone (Brandocet 5/325)", "start_date": "2020-03-02", "end_date": "2020-05-01", "status": "stopped"}])
+            self.assertEqual(store.merge_med_sources(), 1)          # the same combination, either order
             self.assertEqual(store.get("medications", "med-examplol")["docs"], ["d1", "d2"])
             self.assertIsNone(store.get("medications", "ccda-med-a"))
             store.upsert_imported("conditions", [
