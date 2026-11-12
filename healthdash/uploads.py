@@ -99,6 +99,7 @@ class Uploads:
         old = self.store.document(sha)
         if old:
             return {'id': sha, 'duplicate': True, 'title': old['title'], 'status': old.get('status') or 'done'}
+        self.store.undelete('documents', sha)
         tmp = os.path.join(self.files_dir, sha + ext + '.tmp')
         with open(tmp, 'wb') as f:
             f.write(data)
@@ -221,7 +222,7 @@ class Uploads:
                          'size': len(page), 'text': html_text(page), 'needs_review': False, 'status': 'done',
                          'summary': f"From the health summary export {d.get('orig_path')}."})
             same = self.store.same_day('encounters', v['date']) if v and v.get('date') else []
-            place = ' / '.join(x for x in (v.get('location'), v.get('facility')) if x) if v else ''
+            place = ccda.place(v.get('location'), v.get('facility')) if v else ''
             twin = None
             if v and v.get('date'):
                 for e in enc + [x for x in self.store.list('encounters') if (x['id'] or '').startswith('ccda-')]:
@@ -240,7 +241,7 @@ class Uploads:
             elif v and v.get('date'):
                 enc.append({'id': ccda.record_ids('visit', v.get('id') or xsha), 'docs': [xsha], 'date': v['date'],
                             'end_date': v.get('end_date') if v.get('end_date') != v['date'] else None,
-                            'type': v['kind'] or 'Office visit', 'facility': ' / '.join(x for x in (v.get('location'), v.get('facility')) if x),
+                            'type': v['kind'] or 'Office visit', 'facility': place,
                             'provider': v.get('provider') or None, 'reason': v.get('reason'),
                             'summary': ('Diagnoses: ' + v['diagnoses']) if v.get('diagnoses') else None})
             for r in doc['labs']:
@@ -413,6 +414,10 @@ class Uploads:
             if rows:
                 counts[kind] = self.store.upsert_imported(kind, rows)
         merged = self.store.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        self.store.tidy_imported_places(ccda.place)
+        self.store.tidy_places()
+        self.store.merge_imported_procedures()
+        counts['providers'] = refresh_doctors(self.store)
         added = {k: v['added'] + v['updated'] for k, v in counts.items()}
         added['medications'] = merged['entries']
         span = f"{when(found[0])} to {when(found[-1])}" if found else 'patient portal data'
@@ -433,8 +438,11 @@ class Uploads:
                                      summary=summary, classified=classify.VERSION)
         return {'questions': [], 'labs': [], 'money': None}
 
+    def doctors(self):
+        return refresh_doctors(self.store, write=False)
+
     def delete(self, sha):
-        d = self.store.delete_upload(sha)
+        d = self.store.delete_document(sha)
         if not d:
             return False
         for f in os.listdir(self.files_dir):
@@ -444,3 +452,61 @@ class Uploads:
 
     def uploaded(self):
         return [d for d in self.store.documents() if (d.get('path') or '').startswith(UPLOAD_DIR + '/')]
+
+
+def refresh_doctors(store, write=True):
+    """One Doctors entry per person named on visits and procedures (credentials, middle initials
+    and notes like "(cardiology)" don't make a second one). A person already entered by hand keeps
+    that entry, which gets the documents that name them. Entries made this way for a name no longer
+    on any visit are removed, unless someone edited them. With write=False, only returns the rows."""
+    from . import ccda
+    from collections import Counter
+    mine = {}
+    for p in store.list('providers'):
+        if not (p['id'] or '').startswith('ccda-') or p.get('edited'):
+            k = ccda.doctor_key(p['name'])
+            if k:
+                mine.setdefault(k, p)
+    seen, theirs = {}, {}
+    for kind in ('encounters', 'procedures'):
+        for r in store.list(kind):
+            for person in ccda.people(r.get('provider')):
+                key = ccda.doctor_key(person)
+                if not key:
+                    continue
+                if key in mine:
+                    theirs.setdefault(key, [])
+                    theirs[key] += [x for x in r.get('docs') or [] if x not in theirs[key]]
+                    continue
+                d = seen.setdefault(key, {'names': Counter(), 'places': Counter(), 'dates': [], 'docs': [], 'visits': 0})
+                d['names'][person] += 1
+                if r.get('facility'):
+                    d['places'][ccda.place(*r['facility'].split(' / '))] += 1
+                if r.get('date'):
+                    d['dates'].append(r['date'][:10])
+                d['visits'] += kind == 'encounters'
+                d['docs'] += [x for x in r.get('docs') or [] if x not in d['docs']]
+    rows = []
+    for key, d in seen.items():
+        # the fullest spelling, e.g. with the middle initial and "MD"
+        name = max(d['names'], key=lambda n: (len(n.split()), d['names'][n], len(n)))
+        span = (f"{min(d['dates'])} to {max(d['dates'])}" if len(set(d['dates'])) > 1 else d['dates'][0]) if d['dates'] else ''
+        seen_at = f"{d['visits']} visit{'s' if d['visits'] != 1 else ''}" if d['visits'] else 'procedures'
+        rows.append({'id': ccda.record_ids('doctor', key), 'name': name,
+                     'facility': d['places'].most_common(1)[0][0] if d['places'] else None,
+                     'notes': f"From the health summaries: {seen_at}{', ' + span if span else ''}."
+                              + (f" Also written as {', '.join(n for n in d['names'] if n != name)}." if len(d['names']) > 1 else ''),
+                     'docs': d['docs'][:40]})
+    if not write:
+        return rows
+    keep = {r['id'] for r in rows}
+    for p in store.list('providers'):
+        if (p['id'] or '').startswith('ccda-doctor-') and not p.get('edited') and p['id'] not in keep:
+            with store.lock:   # a name that is now someone's hand-made entry, or no longer on any visit
+                store.db.execute('DELETE FROM providers WHERE id=?', (p['id'],))
+                store.db.commit()
+    for key, docs in theirs.items():
+        have = len(mine[key]['docs'])
+        for x in docs[:max(0, 40 - have)]:
+            store.link_doc('providers', mine[key]['id'], x)
+    return store.upsert_imported('providers', rows)

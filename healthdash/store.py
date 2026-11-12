@@ -31,6 +31,7 @@ KINDS = {
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
 }
 NUMERIC = {'num'}
+DELETED = '(deleted)'   # in the moved table: deleted on the dashboard, not moved to a person
 DROPPED = {}  # removed columns, erased on open
 DROPPED_TABLES = ['financial']  # bills and estimates are no longer kept
 INTEGER = {'abnormal'}
@@ -40,6 +41,11 @@ DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
                        'person_edited INTEGER DEFAULT 0']}  # columns added after the first release
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
+
+
+def _squash(name):
+    """A place name for comparing: lower case, single spaces."""
+    return re.sub(r'\s+', ' ', str(name or '')).strip().lower()
 
 
 class ValidationError(ValueError):
@@ -146,6 +152,36 @@ class _LockedDB:
 NOT_DRUGS = {'misc', 'miscellaneous', 'med', 'meds', 'medication', 'patient', 'pill', 'unable', 'unlisted',
              'historical', 'other', 'anes', 'rdna', 'apap', 'otc', 'generic', 'unknown'}
 
+# over-the-counter medicines and supplies: listed, but their start and stop dates aren't tracked
+OTC_RE = re.compile(
+    r'\b(acetaminophen|tylenol|advil|motrin|naproxen|aleve|loratadine|claritin|cetirizine|'
+    r'zyrtec|fexofenadine|allegra|diphenhydramine|benadryl|docusate|colace|senna|sennosides|miralax|'
+    r'polyethylene glycol|famotidine|pepcid|calcium carbonate|tums|simethicone|loperamide|imodium|bismuth|'
+    r'dextromethorphan|delsym|guaifenesin|mucinex|melatonin|(multi-?|multi-day )?vitamins?|multivitamin|'
+    r'cholecalciferol|cyanocobalamin|biotin|fish oil|omega-3|magnesium|ferrous|lactobacillus|acidophilus|'
+    r'saccharomyces|florastor|probiotics?|lancets?|test strips?|in vitro strip|pill splitter|'
+    r'misc(ellaneous)? equipment)\b', re.I)
+# a prescription combination or strength, or given by injection or IV in the hospital: still tracked
+NOT_OTC_RE = re.compile(r'butalbital|codone|codeine|tramadol|\bapap\b|\binj\b|injection|\biv\b|\banes\b|'
+                        r'motrin\s*(400|600|800)\b|naproxen\s*(sodium\s*)?(250|275|375|500|550)\b', re.I)
+
+
+# common short names for procedures, so "I and D" is known to be an incision and drainage
+PROCEDURE_SHORT = [(r'\bi\s*(and|&)\s*d\b', 'incision drainage'), (r'\begd\b', 'esophagogastroduodenoscopy'),
+                   (r'\btah\b', 'total abdominal hysterectomy'), (r'\brfa\b', 'radiofrequency ablation'),
+                   (r'\bd\s*(and|&)\s*c\b', 'dilation curettage'), (r'\blap chole\b', 'laparoscopic cholecystectomy')]
+
+
+def is_otc(name, extra=None):
+    """True for an over-the-counter medicine or supply ("Tylenol CAPS", "Loratadine 10 MG"), not for a
+    prescription combination or strength that contains one ("Oxycodone-Acetaminophen 5-325").
+    extra: (more OTC words, more prescription patterns) as compiled patterns, from set_otc."""
+    n = name or ''
+    yes, no = extra or (None, None)
+    if NOT_OTC_RE.search(n) or (no and no.search(n)):
+        return False
+    return bool(OTC_RE.search(n) or (yes and yes.search(n)))
+
 
 class Store:
     def __init__(self, path):
@@ -239,7 +275,11 @@ class Store:
         order = {'medications': 'COALESCE(end_date, "9999") DESC, start_date DESC, name',
                  'conditions': 'status, name', 'allergies': 'substance',
                  'providers': 'name'}.get(kind, 'date DESC, id')
-        return [self._decode(r) for r in self._rows(f'SELECT * FROM {kind} ORDER BY {order}')]
+        rows = [self._decode(r) for r in self._rows(f'SELECT * FROM {kind} ORDER BY {order}')]
+        if kind == 'medications':
+            for r in rows:
+                r['otc'] = self.is_otc(r['name'])
+        return rows
 
     def get(self, kind, rid):
         if kind not in KINDS:
@@ -271,10 +311,14 @@ class Store:
         return self.get(kind, rid)
 
     def delete(self, kind, rid):
+        """Delete an entry. It is remembered, so a later import doesn't put it back."""
         if kind not in KINDS:
             raise ValidationError(f'unknown kind: {kind}')
+        self._moved_table()
         with self.lock:
             n = self.db.execute(f'DELETE FROM {kind} WHERE id=?', (rid,)).rowcount
+            if n:
+                self.db.execute('INSERT OR REPLACE INTO moved VALUES (?, ?, ?, ?)', (kind, rid, DELETED, now()))
             self.db.commit()
         return n > 0
 
@@ -417,6 +461,111 @@ class Store:
             self.db.execute(f'UPDATE {kind} SET docs=? WHERE id=?', (json.dumps(r['docs'] + [did]), rid))
             self.db.commit()
 
+    def tidy_imported_places(self, place):
+        """Imported visits saved as 'Clinic / Clinic' by older versions -> 'Clinic' (edited ones are left alone)."""
+        with self.lock:
+            for kind in ('encounters', 'procedures'):
+                for rid, fac in self.db.execute(f"SELECT id, facility FROM {kind} WHERE id LIKE 'ccda-%' AND edited=0 "
+                                                "AND facility LIKE '% / %'").fetchall():
+                    new = place(*fac.split(' / '))
+                    if new != fac:
+                        self.db.execute(f'UPDATE {kind} SET facility=? WHERE id=?', (new, rid))
+            self.db.commit()
+
+    # ---- one name per place, one entry per procedure -----------------------------------
+
+    def set_place_names(self, names):
+        """{"Example General Hospital": ["EXAMPLE GEN HOSP", "EGH"], ...}: every other way a place
+        is written, and the name to show for it. Replaces the earlier list."""
+        if not isinstance(names, dict):
+            raise ValidationError('place names must be {name: [other spellings]}')
+        with self.lock:
+            self.db.execute('CREATE TABLE IF NOT EXISTS place_alias (alias TEXT PRIMARY KEY, name TEXT)')
+            self.db.execute('DELETE FROM place_alias')
+            for name, others in names.items():
+                for o in others if isinstance(others, list) else [others]:
+                    self.db.execute('INSERT OR REPLACE INTO place_alias VALUES (?, ?)', (_squash(o), str(name).strip()))
+            self.db.commit()
+
+    def tidy_places(self):
+        """Every facility written one way: the listed name for a known other spelling, and one
+        spelling for names that differ only in capitals and spaces (the most used one, preferring
+        one that isn't all capitals). Returns how many entries changed."""
+        self.db.execute('CREATE TABLE IF NOT EXISTS place_alias (alias TEXT PRIMARY KEY, name TEXT)')
+        alias = dict(self.db.execute('SELECT alias, name FROM place_alias').fetchall())
+        tables = [k for k in KINDS if 'facility' in KINDS[k]] + ['documents']
+        from collections import Counter
+        count = Counter()
+        for t in tables:
+            for (f,) in self.db.execute(f'SELECT facility FROM {t} WHERE facility IS NOT NULL').fetchall():
+                parts = []
+                for x in f.split(' / '):
+                    if _squash(x) not in map(_squash, parts):
+                        parts.append(x.strip())
+                f = ' / '.join(parts)
+                count[alias.get(_squash(f), f)] += 1
+        best = {}
+        for name, n in count.items():
+            k, cur = _squash(name), best.get(_squash(name))
+            if cur is None or (name.isupper(), -n) < (cur.isupper(), -count[cur]):
+                best[k] = name
+        for name in alias.values():   # a listed name wins over any spelling of it
+            best[_squash(name)] = name
+        changed = 0
+        with self.lock:
+            for t in tables:
+                for rid, f in self.db.execute(f'SELECT id, facility FROM {t} WHERE facility IS NOT NULL').fetchall():
+                    a = alias.get(_squash(f), f)
+                    new = best.get(_squash(a), a)
+                    parts = []
+                    for x in new.split(' / '):   # "Clinic / Clinic" -> "Clinic"
+                        if _squash(x) not in map(_squash, parts):
+                            parts.append(x.strip())
+                    new = ' / '.join(parts)
+                    new = alias.get(_squash(new), new)
+                    new = best.get(_squash(new), new)
+                    if new != f:
+                        self.db.execute(f'UPDATE {t} SET facility=? WHERE id=?', (new, rid))
+                        changed += 1
+            self.db.commit()
+        return changed
+
+    def places(self):
+        """Every place named in the records, most used first (for suggestions when typing one)."""
+        from collections import Counter
+        n = Counter()
+        for t in [k for k in KINDS if 'facility' in KINDS[k]] + ['documents']:
+            for f, c in self.db.execute(f'SELECT facility, COUNT(*) FROM {t} WHERE facility IS NOT NULL '
+                                        f"AND facility != '' GROUP BY facility").fetchall():
+                n[f] += c
+        return [f for f, _ in n.most_common()]
+
+    def merge_imported_procedures(self):
+        """A procedure from a health summary that is also entered in detail (same date, give or take
+        a day, or the same month when only the month is known, and a word of the name in common)
+        is folded into the detailed entry: its documents are linked there and it is removed, so a
+        later import doesn't add it again. Returns how many were merged."""
+        def words(n):
+            n = (n or '').lower()
+            for short, full in PROCEDURE_SHORT:
+                n = re.sub(short, ' ' + full + ' ', n)
+            return {w for w in re.findall(r'[a-z]{4,}', n)
+                    if w not in ('left', 'right', 'with', 'lumbar', 'none', 'history', 'procedure', 'implants')}
+        def related(a, b):
+            return any(x in y or y in x for x in words(a) for y in words(b))
+        merged = 0
+        for r in self.list('procedures'):
+            if not (r['id'] or '').startswith('ccda-') or r.get('edited') or not r.get('date'):
+                continue
+            match = [x for x in self.same_day('procedures', r['date'], days=1) if related(x['name'], r['name'])]
+            if not match:
+                continue
+            for d in r['docs']:
+                self.link_doc('procedures', match[0]['id'], d)
+            self.delete('procedures', r['id'])
+            merged += 1
+        return merged
+
     def same_day(self, kind, date, days=1):
         """Entries not from an import whose date is within `days` of `date`."""
         from datetime import date as D
@@ -440,7 +589,8 @@ class Store:
 
     def consolidate_meds(self, drug_key, record_id, gap_days=60):
         """Imported medication lines (not edited by a person) merged into one entry per drug per
-        period of use: lines of the same drug less than gap_days apart become one entry."""
+        period of use: lines of the same drug less than gap_days apart become one entry. An
+        over-the-counter drug becomes a single entry, since its start and stop aren't tracked."""
         from datetime import date as D, timedelta
         rows = [r for r in self.list('medications') if (r['id'] or '').startswith('ccda-') and not r.get('edited')]
         # "generic (Brand 10 mg)" teaches that Brand is that generic; learned names are kept,
@@ -515,9 +665,10 @@ class Store:
         for key, items in groups.items():
             items.sort(key=lambda r: (d(r['start_date']) or D.max, r['updated'] or ''))
             episodes = []
+            otc = all(self.is_otc(r['name']) for r in items)
             for r in items:
                 s, e = d(r['start_date']), until(r)
-                if episodes and (s is None or episodes[-1]['end'] is None or s <= episodes[-1]['end'] + timedelta(days=gap_days)):
+                if episodes and (otc or s is None or episodes[-1]['end'] is None or s <= episodes[-1]['end'] + timedelta(days=gap_days)):
                     ep = episodes[-1]
                     ep['rows'].append(r)
                     if e and (ep['end'] is None or e > ep['end']):
@@ -554,9 +705,137 @@ class Store:
         self.upsert_imported('medications', merged)
         return {'lines': len(rows), 'entries': len(merged)}
 
+    def set_otc(self, cfg):
+        """{"words": [more over-the-counter drug names], "not": [patterns that make one prescription,
+        e.g. a strength]}: added to the built-in lists. Replaces the earlier setting."""
+        if not isinstance(cfg, dict):
+            raise ValidationError('otc must be {"words": [...], "not": [...]}')
+        words = [str(w) for w in cfg.get('words') or []]
+        nots = [str(x) for x in cfg.get('not') or []]
+        for x in nots:
+            try:
+                re.compile(x)
+            except re.error as e:
+                raise ValidationError(f'otc "not" pattern {x!r}: {e}')
+        with self.lock:
+            self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
+            self.db.execute('INSERT OR REPLACE INTO setting VALUES (?, ?)', ('otc', json.dumps({'words': words, 'not': nots})))
+            self.db.commit()
+        object.__setattr__(self, '_otc', None)
+
+    def is_otc(self, name):
+        if getattr(self, '_otc', None) is None:
+            self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
+            row = self.db.execute("SELECT value FROM setting WHERE key='otc'").fetchone()
+            cfg = json.loads(row[0]) if row else {}
+            words = [re.escape(w) for w in cfg.get('words') or []]
+            yes = re.compile(r'\b(' + '|'.join(words) + r')\b', re.I) if words else None
+            no = re.compile('|'.join(cfg.get('not')), re.I) if cfg.get('not') else None
+            self._otc = (yes, no)
+        return is_otc(name, self._otc)
+
+    def apply_med_list(self, text, as_of, apply=False):
+        """A current medication list ("Topiramate 100mg", one per line) set against the records:
+        listed drugs stay or become active with the listed dose, other active prescriptions are
+        stopped as of that date, and a drug listed under two names keeps one entry. Over-the-counter
+        entries that aren't listed are left alone. With apply=False, only says what would change."""
+        import difflib
+        from .ccda import drug_key
+        if not DATE_RE.match(as_of or '') or len(as_of) != 10:
+            raise ValidationError('the list date must look like YYYY-MM-DD')
+        self.db.execute('CREATE TABLE IF NOT EXISTS drug_alias (brand TEXT PRIMARY KEY, generic TEXT)')
+        parent = {}
+
+        def root(k):
+            while parent.get(k, k) != k:
+                k = parent[k]
+            return k
+        pairs = list(self.db.execute('SELECT brand, generic FROM drug_alias'))
+        pairs += [(b.split('-')[0], g) for b, g in pairs if '-' in b and len(b.split('-')[0]) >= 4]   # "Toprol XL" is toprol
+        for b, g in pairs:
+            rb, rg = root(b), root(g)
+            if rb != rg:
+                parent[max(rb, rg)] = min(rb, rg)   # brand and generic, either way round: one drug
+
+        def key(name):
+            k = drug_key(name)
+            if k in NOT_DRUGS:
+                inner = re.search(r'\(([^()]+)', name or '')
+                k = drug_key(inner.group(1)) if inner else k
+            return root(k)
+        meds = self.list('medications')
+        current = [m for m in meds if m['status'] == 'active' or (not m['end_date'] and not m['status'])]
+        known = sorted({key(m['name']) for m in meds})
+        # every name a known drug goes by, generic or brand, to catch a misspelling of either
+        names = {n: root(n) for n in set(parent) | {drug_key(m['name']) for m in meds} if root(n) in known}
+        listed = []
+        for line in (text or '').splitlines():
+            line = re.sub(r'^\s*[-*•\d.)]*\s+', '', line).strip() if re.match(r'^\s*([-*•]|\d+[.)])\s', line) else line.strip()
+            if not line:
+                continue
+            m = re.match(r'(.*?[A-Za-z][^\d]*?)\s*(\d.*)?$', line)
+            name, dose = (m.group(1).strip(), (m.group(2) or '').strip()) if m else (line, '')
+            dose = re.sub(r'(?i)(\d)\s*(mg|mcg|ml|g|units?)\b', lambda x: f'{x.group(1)} {x.group(2).lower()}', dose) or None
+            k = key(name)
+            if k not in known:   # a typo ("Trazdone") finds the drug it is close to
+                close = difflib.get_close_matches(k, list(names), n=1, cutoff=0.8)
+                if close:
+                    k, name = names[close[0]], close[0].title()   # a new entry gets the right spelling
+            listed.append({'line': line, 'name': name, 'dose': dose, 'key': k})
+        if not listed:
+            raise ValidationError('paste the list, one medication per line')
+        keep, stop, add, merge = [], [], [], []
+        by_key = {}
+        for m in current:
+            by_key.setdefault(key(m['name']), []).append(m)
+        for x in listed:
+            rows = by_key.pop(x['key'], [])
+            if not rows:
+                add.append(x)
+                continue
+            rows.sort(key=lambda r: (-len(r['docs']), r['start_date'] or '9999'))   # the best-documented one stays
+            keep.append({'id': rows[0]['id'], 'name': rows[0]['name'], 'line': x['line'],
+                         'dose_from': rows[0]['dose'], 'dose': x['dose'] or rows[0]['dose']})
+            merge += [{'id': r['id'], 'name': r['name'], 'into': rows[0]['id'], 'into_name': rows[0]['name']} for r in rows[1:]]
+        for rows in by_key.values():
+            stop += [{'id': r['id'], 'name': r['name'], 'start_date': r['start_date']} for r in rows if not r['otc']]
+        plan = {'as_of': as_of, 'keep': keep, 'stop': stop, 'add': [{'name': x['name'], 'dose': x['dose'], 'line': x['line']} for x in add],
+                'merge': merge}
+        if not apply:
+            return plan
+        note = f'On the current medication list of {as_of}.'
+        for k in keep:
+            r = self.get('medications', k['id'])
+            notes = r['notes'] or ''
+            same = lambda a, b: re.sub(r'\.0\b|\s', '', (a or '').lower()) == re.sub(r'\.0\b|\s', '', (b or '').lower())
+            if k['dose_from'] and not same(k['dose'], k['dose_from']):
+                notes = f"{notes} Earlier records gave the dose as {k['dose_from']}.".strip()
+            self.update('medications', k['id'], {'status': 'active', 'end_date': None, 'dose': k['dose'],
+                                                  'notes': f'{notes} {note}'.strip(), 'needs_review': 0})
+        for g in merge:
+            r = self.get('medications', g['id'])
+            for d in r['docs']:
+                self.link_doc('medications', g['into'], d)
+            self.delete('medications', g['id'])
+        for x in stop:
+            r = self.get('medications', x['id'])
+            self.update('medications', x['id'], {
+                'status': 'stopped', 'end_date': as_of, 'needs_review': 0,
+                'notes': f"{r['notes'] or ''} Not on the current medication list of {as_of}; stopped by then.".strip()})
+        for x in add:
+            self.create('medications', {'name': x['name'], 'dose': x['dose'], 'status': 'active', 'notes': note})
+        return plan
+
     def _moved_table(self):
         self.db.executescript('CREATE TABLE IF NOT EXISTS moved (kind TEXT, id TEXT, to_person TEXT, at TEXT, '
                               'PRIMARY KEY (kind, id));')
+
+    def undelete(self, kind, rid):
+        """Someone added it again on purpose: imports may bring it back."""
+        self._moved_table()
+        with self.lock:
+            self.db.execute('DELETE FROM moved WHERE kind=? AND id=? AND to_person=?', (kind, rid, DELETED))
+            self.db.commit()
 
     def moved_ids(self, kind):
         self._moved_table()
@@ -627,6 +906,25 @@ class Store:
         with self.lock:
             self.db.execute('DELETE FROM documents WHERE id=?', (did,))
             self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
+            self.db.commit()
+        return d
+
+    def delete_document(self, did):
+        """Take a document off the dashboard (the file in the records folder is not touched).
+        Entries keep their other sources; it is remembered so a later import doesn't add it back."""
+        d = self.document(did)
+        if not d:
+            return None
+        if (d.get('path') or '').startswith('Uploaded/'):
+            self.delete_upload(did)
+        self._moved_table()
+        with self.lock:
+            self.db.execute('DELETE FROM documents WHERE id=?', (did,))
+            for kind in KINDS:
+                for rid, docs in self.db.execute(f"SELECT id, docs FROM {kind} WHERE docs LIKE ?", (f'%{did}%',)).fetchall():
+                    self.db.execute(f'UPDATE {kind} SET docs=? WHERE id=?',
+                                    (json.dumps([x for x in json.loads(docs or '[]') if x != did]), rid))
+            self.db.execute('INSERT OR REPLACE INTO moved VALUES (?, ?, ?, ?)', ('documents', did, DELETED, now()))
             self.db.commit()
         return d
 
@@ -733,6 +1031,8 @@ class Store:
             add('imaging', r['id'], r['date'], f"{r['modality'] or ''} {r['description'] or ''}".strip(),
                 r['notes'], r['facility'], None, r['docs'])
         for r in self.list('medications'):
+            if r['otc']:
+                continue
             label = f"{r['name']} {r['dose'] or ''}".strip()
             add('medications', r['id'], r['start_date'], f'Started {label}', r['purpose'], None,
                 {'change': 'start'}, r['docs'])
@@ -754,9 +1054,11 @@ class Store:
         c['documents'] = self.db.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
         review = self.db.execute('SELECT COUNT(*) FROM documents WHERE needs_review=1').fetchone()[0]
         for k in KINDS:
-            review += self.db.execute(f'SELECT COUNT(*) FROM {k} WHERE needs_review=1').fetchone()[0]
-        current = self._rows("SELECT * FROM medications WHERE (status='active' OR "
-                             "(end_date IS NULL AND status IS NULL)) ORDER BY name")
+            if k != 'medications':
+                review += self.db.execute(f'SELECT COUNT(*) FROM {k} WHERE needs_review=1').fetchone()[0]
+        review += sum(1 for r in self._rows('SELECT name FROM medications WHERE needs_review=1') if not self.is_otc(r['name']))
+        current = [r for r in self._rows("SELECT * FROM medications WHERE (status='active' OR "
+                                         "(end_date IS NULL AND status IS NULL)) ORDER BY name") if not self.is_otc(r['name'])]
         last = self._rows('SELECT * FROM encounters ORDER BY date DESC LIMIT 1')
         span = self.db.execute("SELECT MIN(date), MAX(date) FROM encounters").fetchone()
         return {'counts': c, 'needs_review': review,
@@ -770,6 +1072,8 @@ class Store:
         recs = []
         for kind in KINDS:
             for r in self._rows(f'SELECT * FROM {kind} WHERE needs_review=1'):
+                if kind == 'medications' and self.is_otc(r['name']):
+                    continue   # what to check on a medicine is its dates, which aren't tracked for these
                 r = self._decode(r)
                 r['kind'] = kind
                 recs.append(r)

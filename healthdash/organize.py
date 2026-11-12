@@ -75,6 +75,9 @@ def _link_tree(src, dst):
 
 
 def organize(source, dest, apply=False, log=print):
+    if os.path.realpath(source) == os.path.realpath(dest):
+        log('The records folder is already the sorted copy; nothing to organize.')
+        return []
     rows = plan(source)
     if not apply:
         for folder, name, rel, disc in rows:

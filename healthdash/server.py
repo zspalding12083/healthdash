@@ -197,6 +197,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if method == 'GET':
                 if p == ['summary']:
                     return self._send(200, self.ctx.store.summary())
+                if p == ['places']:
+                    return self._send(200, self.ctx.store.places())
                 if p == ['timeline']:
                     return self._send(200, self.ctx.store.timeline())
                 if p == ['search']:
@@ -251,6 +253,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     if not self._importer():
                         return self._err(403, 'uploads are only allowed from the ingest host')
                     return self._upload(p[1], self._raw_body())
+                if p == ['medications', 'current-list']:
+                    b = self._json() or {}
+                    return self._send(200, self.ctx.store.apply_med_list(b.get('text'), b.get('as_of'), bool(b.get('apply'))))
                 if len(p) == 1 and p[0] in KINDS:
                     return self._send(201, self.ctx.store.create(p[0], self._json()))
             if method == 'PUT':
@@ -262,7 +267,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     return self._send(200, r) if r else self._err(404, 'not found')
             if method == 'DELETE' and len(p) == 2 and p[0] == 'documents':
                 if not self.ctx.uploads or not self.ctx.uploads.delete(p[1]):
-                    return self._err(400, 'only files added from the dashboard can be deleted here')
+                    return self._err(404, 'no such document')
                 return self._send(200, {'deleted': True})
             if method == 'DELETE' and len(p) == 2 and p[0] in KINDS:
                 return self._send(200, {'deleted': self.ctx.store.delete(p[0], p[1])})
@@ -342,11 +347,21 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
 
         def _import(self, body):
             result = {}
+            st = self.ctx.store
             if body.get('documents'):
-                result['documents'] = self.ctx.store.upsert_documents(body['documents'])
+                result['documents'] = st.upsert_documents(body['documents'])
+            if isinstance(body.get('place_names'), dict):
+                st.set_place_names(body['place_names'])
+            if isinstance(body.get('otc'), dict):
+                st.set_otc(body['otc'])
             for kind in KINDS:
                 if body.get(kind):
-                    result[kind] = self.ctx.store.upsert_imported(kind, body[kind])
+                    result[kind] = st.upsert_imported(kind, body[kind])
+            if any(body.get(k) for k in KINDS) or 'place_names' in body:
+                from .uploads import refresh_doctors
+                result['places_renamed'] = st.tidy_places()
+                result['procedures_merged'] = st.merge_imported_procedures()
+                result['doctors'] = refresh_doctors(st)
             return result
 
         def _upload(self, name, data):

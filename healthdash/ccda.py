@@ -424,5 +424,43 @@ def drug_key(name):
     return words[0] if words else n.strip()[:20]
 
 
+_CREDENTIALS = {'md', 'do', 'pa', 'pac', 'np', 'fnp', 'aprn', 'rn', 'dpm', 'dds', 'dmd', 'od', 'phd', 'facs', 'facp',
+                'facc', 'facog', 'msn', 'mph', 'crna', 'anp', 'cnm', 'dnp', 'lcsw', 'rpac', 'cot', 'mbbs', 'pt', 'dpt', 'ms', 'dr', 'jr', 'sr', 'ii', 'iii'}
+
+
+def people(line):
+    """The people one provider line names: "Dr. Pat Example (attending); ER: Dr. Sam Sample" ->
+    ["Dr. Pat Example", "Dr. Sam Sample"], with notes in brackets and labels like "ER:" taken off."""
+    out = []
+    for part in re.split(r';|\band\b|\s/\s', line or ''):
+        part = re.sub(r'\([^()]*\)', ' ', part)
+        part = re.sub(r'^\s*([A-Za-z][\w -]{0,20}:|(sent|referred) by\b)', ' ', part, flags=re.I)
+        part = re.sub(r'\s+', ' ', part).strip(' ,.-')
+        if part:
+            out.append(part)
+    return out
+
+
+def doctor_key(name):
+    """The person a provider line is about, ignoring credentials, middle names and notes in
+    brackets ("Pat Q. Example MD" and "Dr. Pat Example (cardiology)" -> "pat example"); None when
+    it isn't a person's name."""
+    name = (people(name) or [''])[0]
+    words = [w for w in re.findall(r"[a-z][a-z'-]*", (name or '').lower()) if w.replace('-', '') not in _CREDENTIALS]
+    words = [w for w in words if len(w) > 1]
+    if len(words) < 2 or not re.search(r'[a-z]', name or ''):
+        return None   # "MD ER", a department, a lone surname
+    return f'{words[0]} {words[-1]}'
+
+
+def place(*parts):
+    """'Clinic / Clinic' -> 'Clinic': join location and facility without repeating one."""
+    out = []
+    for x in parts:
+        if x and x.strip() and x.strip().lower() not in (o.lower() for o in out):
+            out.append(x.strip())
+    return ' / '.join(out)
+
+
 def record_ids(kind, *parts):
     return f'ccda-{kind}-{_key(*parts)}'

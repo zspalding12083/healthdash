@@ -15,6 +15,7 @@ DATA = os.environ.get('HEALTHDASH_DATA', os.path.join(PROJECT, 'data'))
 EXTRACTED = os.path.join(PROJECT, 'extracted')        # text cache, one JSON per file (by sha256)
 CATALOG = os.path.join(DATA, 'catalog.json')          # per-file title / date / category / facility
 RECORDS = os.path.join(DATA, 'records.json')          # structured history, {kind: [records]}
+ALIASES = os.path.join(DATA, 'path_aliases.json')     # {old path: new path} after files were moved or renamed
 LOCAL = os.path.join(DATA, 'local.json')              # personal settings below
 
 
@@ -40,6 +41,10 @@ NAME_WORDS = [w.lower() for w in _L.get('name_words', [])]
 NOISE_LINES = _L.get('noise_lines', [])
 # (text found in a facility name, short name used in organized file names)
 FACILITY_SHORT = [tuple(p) for p in _L.get('facility_short', [])]
+# {name to show: [other ways the records write that place]}
+PLACE_NAMES = _L.get('place_names', {})
+# more over-the-counter drug names, and patterns (like a strength) that make one a prescription
+OTC = _L.get('otc', {})
 
 # Folder for each document category in the organized copy
 CATEGORY_FOLDERS = {

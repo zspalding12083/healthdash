@@ -1,8 +1,13 @@
 # healthdash
 
-A private, self-hosted dashboard for one person's medical history: visits, tests, lab results,
-procedures, and when each medication was started and stopped. Every line links back to the original PDF or scan it came from, and the full text of
-every document is searchable.
+Self-hosted personal health record dashboard. Import MyChart and other patient portal exports,
+search medical PDFs and scans with local OCR, and track doctor visits, lab trends, and medication
+history. Runs on Linux, Raspberry Pi, and macOS.
+
+One person's medical history in one place: visits, tests, lab results, procedures, doctors, and
+when each medication was started and stopped. Every line links back to the original PDF or scan it
+came from, and the full text of every document is searchable. Python standard library and SQLite,
+no other dependencies.
 
 Built for a family member whose records were a folder of hospital printouts, portal exports,
 scanned letters and imaging CDs. It runs on a small Linux box (a Raspberry Pi–class computer) or a
@@ -19,8 +24,15 @@ Mac on the home network.
 - **Timeline**: every visit, test, procedure and medication change in date order, filterable by type,
   place and year.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
-  per dose change).
+  per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
+  it would change (started, stopped, a dose that differs, one drug under two names) before saving
+  anything; misspellings are matched. Over-the-counter medicines and supplies are listed on their
+  own, without start and stop dates.
 - **Visits, Tests & imaging, Procedures, Conditions, Allergies, Doctors**: tables you can edit in place.
+  The same doctor written different ways ("Pat Q. Example MD", "Dr. Pat Example (cardiology)") is one
+  entry; a place written different ways ("EXAMPLE GEN HOSP", "Example General Hospital") gets one
+  name, from a list of other spellings you keep in `data/local.json` (`place_names`); and a
+  procedure that a portal export and an operative report both list is one entry.
 - **Lab trends**: the latest result of every test with its normal range and the change since last
   time, out-of-range results first, grouped by kind (blood counts, kidney, liver, sugar...). Click a
   test for a chart of every value, one hospital stay at a time or all years.
@@ -33,9 +45,17 @@ Mac on the home network.
   sorted by kind, date and facility, its lab values are pulled out, and it is
   filed. Anything it isn't sure about is put to you as a question, with its best guess filled in.
   Copies of documents already filed are caught and lab values are never added twice.
-- **Needs review**: uploads with open questions, new files the catalog doesn't know yet.
+- **Needs review**: uploads with open questions, new files the catalog doesn't know yet, and
+  entries filled in from records that didn't say for sure. Each says in plain words what to check
+  (usually a date), and "See the source" opens the original at the right pages.
 
 Everything runs on your own machine. Nothing is sent to any outside service, API or cloud.
+
+| Medications | Lab trends | Needs review |
+|---|---|---|
+| ![Medications tab, demo data](docs/medications.png) | ![Lab trends tab, demo data](docs/lab-trends.png) | ![Needs review tab, demo data](docs/needs-review.png) |
+
+All screenshots use the made-up demo data (`python3 -m healthdash demo`).
 
 ## What it does not do
 

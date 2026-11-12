@@ -45,6 +45,23 @@ class StoreTests(unittest.TestCase):
         for k, v in SAMPLE.items():
             self.s.upsert_imported(k, json.loads(json.dumps(v)))
 
+    def test_deleted_entries_and_documents_stay_deleted(self):
+        self.load()
+        enc = self.s.list('encounters')[0]
+        self.assertTrue(self.s.delete('encounters', enc['id']))
+        self.s.upsert_documents([{'id': 'DOC2', 'path': 'b.pdf', 'title': 'Letter', 'text': 'x'}])
+        self.s.upsert_imported('procedures', [{'id': 'p1', 'name': 'Sample procedure', 'docs': ['DOC1', 'DOC2']}])
+        self.assertTrue(self.s.delete_document('DOC2'))
+        self.assertEqual(self.s.get('procedures', 'p1')['docs'], ['DOC1'])   # the entry stays, without the file
+        for k, v in SAMPLE.items():                                            # the next import
+            self.s.upsert_imported(k, json.loads(json.dumps(v)))
+        self.s.upsert_documents([{'id': 'DOC2', 'path': 'b.pdf', 'title': 'Letter', 'text': 'x'}])
+        self.assertIsNone(self.s.get('encounters', enc['id']))
+        self.assertIsNone(self.s.document('DOC2'))
+        self.s.undelete('documents', 'DOC2')                                   # added again on purpose
+        self.s.upsert_documents([{'id': 'DOC2', 'path': 'b.pdf', 'title': 'Letter', 'text': 'x'}])
+        self.assertIsNotNone(self.s.document('DOC2'))
+
     def test_import_and_timeline(self):
         self.load()
         tl = self.s.timeline()
@@ -177,6 +194,34 @@ class OrganizeTests(unittest.TestCase):
             self.assertTrue(os.path.samefile(linked, os.path.join(src, 'sub/c.pdf')))
             self.assertTrue(os.path.exists(os.path.join(src, 'a.pdf')))  # originals untouched
             self.assertTrue(os.path.exists(os.path.join(dst, '_rename_map.csv')))
+
+
+class MovedFilesTests(unittest.TestCase):
+    def test_sorted_folder_as_source(self):
+        """After the original folder is gone, the sorted copy is read directly; the catalog and
+        records.json still find files by their old names through path_aliases.json."""
+        from unittest import mock
+        from healthdash import config, ingest
+        with tempfile.TemporaryDirectory() as tmp:
+            src, data = os.path.join(tmp, 'Sorted'), os.path.join(tmp, 'data')
+            os.makedirs(os.path.join(src, '04 Labs')); os.makedirs(data)
+            with open(os.path.join(src, '04 Labs', '2020-01-02_Sample-Lab_Results.txt'), 'w') as f:
+                f.write('Glucose 99 mg/dL')
+            with open(os.path.join(data, 'catalog.json'), 'w') as f:
+                json.dump({'files': {'old/labs.txt': {'title': 'Lab results', 'date': '2020-01-02', 'category': 'labs'}}}, f)
+            with open(os.path.join(data, 'records.json'), 'w') as f:
+                json.dump({'labs': [{'id': 'l1', 'date': '2020-01-02', 'analyte': 'Glucose', 'docs': ['old/labs.txt']}]}, f)
+            with open(os.path.join(data, 'path_aliases.json'), 'w') as f:
+                json.dump({'old/labs.txt': '04 Labs/2020-01-02_Sample-Lab_Results.txt'}, f)
+            with mock.patch.multiple(config, CATALOG=os.path.join(data, 'catalog.json'), RECORDS=os.path.join(data, 'records.json'),
+                                     ALIASES=os.path.join(data, 'path_aliases.json'), EXTRACTED=os.path.join(tmp, 'x'), ORGANIZED=src):
+                b = ingest.build(src, log=lambda *a: None)
+                self.assertEqual(organize.organize(src, src, apply=True, log=lambda *a: None), [])  # never organizes into itself
+            doc, = b['documents']
+            self.assertEqual((doc['title'], doc['needs_review'], doc['organized_path']), ('Lab results', False, doc['path']))
+            self.assertEqual(b['records']['labs'][0]['docs'], [doc['id']])
+            self.assertEqual((b['unknown'], b['missing_refs']), ([], []))
+            self.assertTrue(os.path.exists(os.path.join(src, '04 Labs', '2020-01-02_Sample-Lab_Results.txt')))
 
 
 class ServerTests(unittest.TestCase):

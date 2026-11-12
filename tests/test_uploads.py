@@ -300,10 +300,11 @@ class DuplicateTests(unittest.TestCase):
         d = self.add(b'%PDF-1 d', day2)
         self.assertIsNone(d['duplicate_of'])
 
-    def test_only_uploads_can_be_deleted(self):
+    def test_any_document_can_be_taken_off_the_dashboard(self):
         self.store.upsert_documents([{'id': 'orig', 'path': 'Hospital/x.pdf', 'title': 'x', 'text': 't'}])
-        self.assertFalse(self.up.delete('orig'))
-        self.assertIsNotNone(self.store.document('orig'))
+        self.assertTrue(self.up.delete('orig'))
+        self.assertIsNone(self.store.document('orig'))
+        self.assertFalse(self.up.delete('orig'))   # already gone
 
 
 class DoctorAndRetryTests(unittest.TestCase):

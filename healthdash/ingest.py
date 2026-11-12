@@ -39,7 +39,14 @@ def _get(url):
 def build(source, log=print):
     manifest = extract_all(source, config.EXTRACTED, log=log)
     cat = catalog.load()
-    organized = organized_paths(source)
+    sorted_already = os.path.realpath(source) == os.path.realpath(config.ORGANIZED)   # the sorted copy is the source
+    organized = {} if sorted_already else organized_paths(source)
+    # files that were moved or renamed since the catalog and records.json were written
+    aliases = {}
+    if os.path.exists(config.ALIASES):
+        with open(config.ALIASES, encoding='utf-8') as f:
+            aliases = json.load(f)
+    old_name = {new: old for old, new in aliases.items()}
     by_path, documents, discs, unknown, seen = {}, [], [], [], {}
     for m in manifest:
         if m['kind'] == 'disc':
@@ -47,10 +54,14 @@ def build(source, log=print):
             continue
         rel = m['path']
         meta = catalog.describe(cat, rel)
+        if meta.get('needs_review') and rel in old_name:
+            meta = catalog.describe(cat, old_name[rel])
         if meta.get('needs_review'):
             unknown.append(rel)
         sha = m['sha256']
         by_path[rel] = sha
+        if rel in old_name:
+            by_path[old_name[rel]] = sha
         if sha in seen:  # the very same file stored twice in the source folder
             seen[sha]['summary'] = ((seen[sha].get('summary') or '') + f' Same file is also at: {rel}').strip()
             continue
@@ -61,7 +72,7 @@ def build(source, log=print):
             text = '\f'.join(ex['pages'])
             pages, ocr = len(ex['pages']), ex.get('ocr_pages', [])
         documents.append({
-            'id': sha, 'path': rel, 'orig_path': rel, 'organized_path': organized.get(rel),
+            'id': sha, 'path': rel, 'orig_path': rel, 'organized_path': rel if sorted_already else organized.get(rel),
             'title': meta.get('title'), 'doc_date': meta.get('date'), 'category': meta.get('category'),
             'facility': meta.get('facility'), 'summary': meta.get('summary'), 'pages': pages,
             'ocr_pages': ocr, 'size': m.get('size'), 'ext': m.get('ext'), 'text': text,
@@ -104,8 +115,8 @@ def ingest(source, pi, dry_run=False, log=print):
         return b
     res = _post(pi + '/api/import', {'documents': b['documents']})
     log(f"documents: {res.get('documents')}")
-    if b['records']:
-        res = _post(pi + '/api/import', b['records'])
+    if b['records'] or config.PLACE_NAMES or config.OTC:
+        res = _post(pi + '/api/import', dict(b['records'], place_names=config.PLACE_NAMES, otc=config.OTC))
         for k, v in res.items():
             log(f'{k}: {v}')
     missing = set(_get(pi + '/api/files/missing'))

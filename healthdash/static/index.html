@@ -100,6 +100,8 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .dlg-b{padding:16px;overflow:auto;max-height:calc(92vh - 60px)}
 .docview{display:grid;grid-template-columns:1fr 320px;gap:16px}
 .docview iframe{width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#fff}
+.doctext .pgno{font:600 11px system-ui,sans-serif;color:var(--ink3);margin:10px 0 4px;border-top:1px solid var(--line);padding-top:6px}
+.doctext .pg.hl{background:var(--accent-soft);border-left:3px solid var(--accent);padding-left:6px;margin-left:-9px}
 .doctext{white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;max-height:70vh;overflow:auto}
 .kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;font-size:14px;margin-bottom:12px}
 .kv div:nth-child(odd){color:var(--ink3)}
@@ -250,7 +252,7 @@ async function render(){
 }
 function bind(root){
   root.querySelectorAll('[data-open]').forEach(el => el.onclick = ev => { ev.stopPropagation(); const [k,id] = el.dataset.open.split('|'); openRecord(k,id); });
-  root.querySelectorAll('[data-doc]').forEach(el => el.onclick = ev => { ev.stopPropagation(); openDoc(el.dataset.doc); });
+  root.querySelectorAll('[data-doc]').forEach(el => el.onclick = ev => { ev.stopPropagation(); openDoc(el.dataset.doc, el.dataset.date, el.dataset.end); });
   root.querySelectorAll('[data-add]').forEach(el => el.onclick = () => editRecord(el.dataset.add, null));
   root.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => sortTable(th));
 }
@@ -309,14 +311,21 @@ VIEWS.timeline = async (sum) => {
 VIEWS.meds = async () => {
   const meds = await load('medications','/api/medications');
   const al = await load('allergies','/api/allergies');
-  const current = meds.filter(m => m.status==='active' || (!m.end_date && !m.status));
-  const past = meds.filter(m => !current.includes(m));
-  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><button class="btn" data-add="medications">Add</button></div>
+  const otc = meds.filter(m => m.otc);   // over the counter: listed, without start and stop dates
+  const rx = meds.filter(m => !m.otc);
+  const current = rx.filter(m => m.status==='active' || (!m.end_date && !m.status));
+  const past = rx.filter(m => !current.includes(m));
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><span><button class="btn" id="medlist">Paste current list</button> <button class="btn" data-add="medications">Add</button></span></div>
     <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>When</th><th data-sort>For</th><th data-sort class="hide-sm">Since</th></tr></thead><tbody>` +
     current.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.schedule)}</td><td>${esc(m.purpose)}</td><td class="nowrap hide-sm" data-v="${esc(m.start_date||'')}">${m.start_date?fdate(m.start_date):'<span class="muted">unknown</span>'}</td></tr>`).join('') +
     `</tbody></table></div></div>`;
+  setTimeout(() => { const b = $('#medlist'); if(b) b.onclick = () => pasteMedList(); });
+  if(otc.length) html += `<div class="panel"><h2>Over the counter (${otc.length})</h2><p class="muted small" style="margin-top:-6px">Over-the-counter medicines and supplies that show up in the records. Their start and stop dates aren't tracked.</p>
+    <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>When</th><th data-sort>For</th></tr></thead><tbody>` +
+    otc.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.schedule)}</td><td>${esc(m.purpose)}</td></tr>`).join('') +
+    `</tbody></table></div></div>`;
   // history bars
-  const dated = meds.filter(m => m.start_date || m.end_date);
+  const dated = rx.filter(m => m.start_date || m.end_date);
   if(dated.length){
     const today = new Date().toISOString().slice(0,10);
     const all = dated.flatMap(m => [m.start_date, m.end_date].filter(Boolean)).map(datePlus).concat([today]).sort();
@@ -504,21 +513,26 @@ function openLab(name, tests){
   const t = tests.find(x => x.name === name); if(!t) return;
   const pts = t.rows.filter(r => r.num != null);
   const rr = refRange(t.last.ref_range);
-  // stretches of results with no gap over 6 months (e.g. one hospital stay), newest first
-  const eps = []; pts.forEach((p, i) => { if(!i || tOf(p.date) - tOf(pts[i-1].date) > YEAR/2) eps.push([]); eps[eps.length-1].push(p); });
-  const label = e => { const a = fdate(e[0].date), b = fdate(e[e.length-1].date); return a === b ? a : `${a} – ${b}`; };
+  // fixed windows counted back from the newest result; a window only shows if it adds results
+  const end = pts.length ? tOf(pts[pts.length-1].date) : 0, eps = [];
+  [[1, 'Last year'], [3, 'Last 3 years'], [5, 'Last 5 years'], [10, 'Last 10 years']].forEach(([y, label]) => {
+    const sub = pts.filter(p => end - tOf(p.date) <= y*YEAR);
+    if(sub.length < pts.length && (!eps.length || sub.length > eps[eps.length-1].pts.length)) eps.push({label, pts: sub});
+  });
+  eps.push({label: 'All years', pts});
+  const first = (i => i < 0 ? eps.length - 1 : i)(eps.findIndex(e => e.pts.length >= 5));  // shortest window with a trend to see, else all years
   const rows = [...t.rows].reverse().map(r => `<tr><td class="nowrap">${fdate(r.date)}</td><td><b>${esc(bare(r))}</b> <span class="muted small">${esc(r.unit||'')}</span>${flagTag(r.flag)}</td><td class="muted hide-sm">${esc(r.ref_range||'')}</td><td class="hide-sm">${esc(r.facility||'')}</td><td>${(r.docs||[]).slice(0,1).map(id => `<a href="#" data-doc="${id}">source</a>`).join('')}</td></tr>`).join('');
-  const pick = eps.length > 1 ? `<div class="filters" id="eps">${[...eps].reverse().map((e, i) => `<button class="btn ${i?'':'primary'}" data-ep="${eps.length-1-i}">${esc(label(e))}</button>`).join('')}<button class="btn" data-ep="all">All years</button></div>` : '';
+  const pick = eps.length > 1 ? `<div class="filters" id="eps">${eps.map((e, i) => `<button class="btn" data-ep="${i}">${esc(e.label)}</button>`).join('')}</div>` : '';
   show(`<h2>${esc(name)}</h2><div class="muted small">${t.rows.length} result${t.rows.length===1?'':'s'}, ${fdate(t.rows[0].date)} to ${fdate(t.last.date)}</div>`,
-    `${pts.length ? pick + '<div class="labchart" id="lc"></div><div class="tip" id="labtip" hidden></div>' : '<p class="muted">No numbers to chart (results are words, like "Negative").</p>'}
+    `${pts.length ? pick + '<div class="muted small" id="ep-span"></div><div class="labchart" id="lc"></div><div class="tip" id="labtip" hidden></div>' : '<p class="muted">No numbers to chart (results are words, like "Negative").</p>'}
      ${pts.length ? `<p class="muted small">${t.last.unit?esc(t.last.unit)+'. ':''}Shaded: normal range from the latest result (labs differ slightly). Red points were flagged high or low by the lab.</p>` : ''}
      <h3>Every result</h3><div class="tablewrap"><table><thead><tr><th>Date</th><th>Result</th><th class="hide-sm">Normal range</th><th class="hide-sm">Where</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
   if(!pts.length) return;
   const draw = ep => {
-    const sub = ep === 'all' ? pts : eps[+ep];
+    const sub = eps[+ep].pts, span = $('#ep-span');
+    if(span) span.textContent = `${fdate(sub[0].date)} to ${fdate(sub[sub.length-1].date)} · ${sub.length} result${sub.length===1?'':'s'}`;
     const subDays = t.days.filter(d => sub.some(p => p.date === d.date));
-    const box = $('#lc'); box.innerHTML = labChart(name, sub, subDays, rr); box.appendChild($('#labtip'));
-    const tip = $('#labtip');
+    const box = $('#lc'), tip = $('#labtip'); box.innerHTML = labChart(name, sub, subDays, rr); box.appendChild(tip);  // keep the tooltip across redraws
     box.querySelectorAll('.pt').forEach(g => {
       g.onmouseenter = () => { const p = sub[+g.dataset.i]; const c = g.querySelector('circle').getBoundingClientRect(), bb = box.getBoundingClientRect();
         tip.innerHTML = `<b>${esc(bare(p))}</b> ${esc(p.unit||'')}${p.flag?` · ${p.flag==='H'?'high':p.flag==='L'?'low':'flagged'}`:''}<br><span class="muted">${fdate(p.date)}${p.facility?' · '+esc(p.facility):''}</span>`;
@@ -528,7 +542,7 @@ function openLab(name, tests){
     document.querySelectorAll('#eps [data-ep]').forEach(b => b.classList.toggle('primary', b.dataset.ep === String(ep)));
   };
   document.querySelectorAll('#eps [data-ep]').forEach(b => b.onclick = () => draw(b.dataset.ep));
-  draw(eps.length > 1 ? eps.length - 1 : 'all');
+  draw(first);
 }
 
 VIEWS.documents = async () => {
@@ -544,12 +558,60 @@ VIEWS.documents = async () => {
   return html;
 };
 
+// what to check on an entry flagged for review, in plain words
+function reviewAsk(kind, x){
+  const d = x.date || x.start_date || x.first_noted || '';
+  if(kind === 'medications') return x.end_date || x.status === 'stopped' ? 'Are the start and stop dates right?' : 'Is the start date right, and is this still being taken?';
+  if(!d) return 'When did this happen?';
+  if(d.length < 10) return `What was the exact date? Only ${d.length === 4 ? 'the year' : 'the month'} is known.`;
+  return 'Are the date and details right?';
+}
+function reviewNote(x){ return x.notes || x.summary || x.result || x.reason || ''; }
+const DELETE_ASK = {
+  documents: 'Remove this file from the dashboard? The file itself stays in the records folder. Entries made from it are kept, and it will not come back on a later import.',
+  upload: 'Delete this upload and the lab results read from it? Other entries are kept.',
+  entry: 'Delete this entry? It will not come back on a later import. Its source documents are kept.'};
+async function deleteItem(kind, id, upload){
+  if(!confirm(kind !== 'documents' ? DELETE_ASK.entry : upload ? DELETE_ASK.upload : DELETE_ASK.documents)) return false;
+  await api(kind === 'documents' ? '/api/documents/' + id : `/api/${kind}/${encodeURIComponent(id)}`, {method:'DELETE'});
+  invalidate(); return true;
+}
+async function markReviewed(kind, id){
+  if(kind === 'documents') await api('/api/documents/' + id, {method:'PUT', body:JSON.stringify({needs_review:0, review_note:null})});
+  else await api(`/api/${kind}/${encodeURIComponent(id)}`, {method:'PUT', body:JSON.stringify({needs_review:0})});
+  invalidate();
+}
+
 VIEWS.review = async () => {
   const r = await api('/api/review');
-  let html = `<div class="panel"><h2>Needs review</h2><p class="muted small" style="margin-top:-6px">New files that haven't been catalogued yet, and entries that were read from hard-to-read scans. Open one, check it against the document, and save to clear the flag.</p>`;
+  let html = `<div class="panel"><h2>Needs review</h2>
+    <p style="margin-top:-6px">Some details were filled in from records that didn't say for sure, most often a date. Each item below says what's unsure.</p>
+    <ul class="small" style="margin:4px 0 14px 18px;padding:0">
+      <li><b>Looks right</b>: keep it as it is and take it off this list.</li>
+      <li><b>Change it</b>: fix what you know better. Changes you make are never overwritten by a later import.</li>
+      <li><b>Delete</b>: it's wrong or doesn't belong here. It won't come back on a later import.</li>
+      <li>Not sure either? Leave it here; nothing is lost.</li></ul>`;
   if(!r.documents.length && !r.records.length) return html + '<div class="empty">All caught up.</div></div>';
-  if(r.documents.length) html += '<h3>Documents</h3>' + r.documents.map(d => `<div class="hit" data-doc="${d.id}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} · ${esc(d.path)}</span>${d.status==='processing'?' <span class="tag">reading…</span>':''}${d.status==='error'?' <span class="tag warn">not read yet</span>':''}${d.review_note?`<div class="small" style="margin-top:3px">${esc(d.review_note.split('\n')[0])}${d.review_note.includes('\n')?' <span class="muted">(+ more)</span>':''}</div>`:''}</div>`).join('');
-  if(r.records.length) html += '<h3>Entries</h3>' + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.id)}</b> <span class="muted small">${fdate(x.date||x.start_date||'')}</span></div>`).join('');
+  const card = (tag, title, when, ask, note, btns) => `<div class="hit review-item"><div><span class="tag">${tag}</span> <b>${esc(title)}</b> <span class="muted small">${esc(when)}</span></div>
+    <div style="margin-top:4px"><b>${esc(ask)}</b></div>${note?`<div class="small muted" style="margin-top:2px">${esc(note)}</div>`:''}<div class="row-actions" style="justify-content:flex-start;margin-top:8px">${btns}</div></div>`;
+  if(r.documents.length) html += `<h3>Files (${r.documents.length})</h3>` + r.documents.map(d => card('File', d.title, fdate(d.doc_date),
+      d.status === 'error' ? "This file couldn't be read." : 'What is this file? Its title, date and kind were guessed from the file name.',
+      (d.review_note || d.path || '').split('\n')[0],
+      `<button class="btn primary" data-ok="documents|${d.id}">Looks right</button><button class="btn" data-doc="${d.id}">Open and describe it</button><button class="btn danger" data-del="documents|${d.id}|${(d.path||'').startsWith('Uploaded/')?1:''}">Delete</button>`)).join('');
+  const kinds = [...new Set(r.records.map(x => x.kind))];
+  for(const k of kinds){
+    const xs = r.records.filter(x => x.kind === k);
+    html += `<h3>${KIND_LABEL[k]}s (${xs.length})</h3>` + xs.map(x => {
+      const when = x.start_date ? `${fdate(x.start_date)} to ${x.end_date ? fdate(x.end_date) : (x.status === 'stopped' ? 'unknown' : 'now')}` : fdate(x.date || x.first_noted || '') || 'no date';
+      return card(KIND_LABEL[k], x.name||x.reason||x.analyte||x.description||x.substance||x.id, when, reviewAsk(k, x), reviewNote(x),
+        `<button class="btn primary" data-ok="${k}|${esc(x.id)}">Looks right</button><button class="btn" data-fix="${k}|${esc(x.id)}">Change it</button>${(x.docs||[]).length?`<button class="btn" data-doc="${x.docs[0]}" data-date="${esc(x.date||x.start_date||x.first_noted||'')}" data-end="${esc(x.end_date||'')}">See the source</button>`:''}<button class="btn danger" data-del="${k}|${esc(x.id)}">Delete</button>`);
+    }).join('');
+  }
+  setTimeout(() => {
+    document.querySelectorAll('[data-ok]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const [k, id] = b.dataset.ok.split('|'); b.disabled = true; await markReviewed(k, id); render(); });
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const [k, id, up] = b.dataset.del.split('|'); if(await deleteItem(k, id, !!up)) render(); });
+    document.querySelectorAll('[data-fix]').forEach(b => b.onclick = async ev => { ev.stopPropagation(); const [k, id] = b.dataset.fix.split('|'); editRecord(k, await api(`/api/${k}/${encodeURIComponent(id)}`)); });
+  });
   return html + '</div>';
 };
 
@@ -570,7 +632,14 @@ async function renderSearch(q){
 const dlg = $('#dlg');
 $('#dlg-close').onclick = () => dlg.close();
 dlg.addEventListener('click', e => { if(e.target === dlg) dlg.close(); });
-function show(title, body){ $('#dlg-title').innerHTML = title; $('#dlg-body').innerHTML = body; if(!dlg.open) dlg.showModal(); bind($('#dlg-body')); }
+function show(title, body){ $('#dlg-title').innerHTML = title; $('#dlg-body').innerHTML = body; if(!dlg.open) dlg.showModal(); bind($('#dlg-body')); fillPlaces(); }
+// places already in the records, offered while typing a "From" or facility
+async function fillPlaces(){
+  if(!$('#dlg-body [list=places]')) return;
+  let dl = $('#places');
+  if(!dl){ dl = document.createElement('datalist'); dl.id = 'places'; document.body.appendChild(dl); }
+  try{ const ps = await load('places', '/api/places'); dl.innerHTML = ps.map(p => `<option value="${esc(p)}">`).join(''); }catch(e){}
+}
 
 async function openRecord(kind, id){
   const r = await api(`/api/${kind}/${encodeURIComponent(id)}`);
@@ -584,10 +653,45 @@ async function openRecord(kind, id){
     else if(f==='encounter_id') return `<div>Visit</div><div><a href="#" data-open="encounters|${esc(v)}">open the visit</a></div>`;
     return `<div>${f.replace(/_/g,' ')}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
   }).join('');
-  const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
+  const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}" data-date="${esc(r.date||r.start_date||r.first_noted||'')}" data-end="${esc(r.end_date||'')}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
   show(`<h2>${esc(r.name||r.reason||r.analyte||r.description||r.substance||r.payee||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
-    `<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button></div>`);
+    `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
   $('#ed').onclick = () => editRecord(kind, r);
+  if(r.needs_review) $('#rok').onclick = async () => { await markReviewed(kind, r.id); nextReview({rec:kind+'|'+r.id}); };
+}
+
+// a current medication list from her doctor or pharmacy, set against the records
+function pasteMedList(text=''){
+  const today = new Date().toISOString().slice(0,10);
+  show('Paste the current medication list',
+    `<p class="small muted" style="margin-top:0">One medication per line, with its dose, for example <i>Topiramate 100mg</i>. Medications on the list are marked as taken now. Prescriptions marked active here that aren't on the list are marked stopped as of the list's date. You'll see the changes before anything is saved.</p>
+    <form class="edit" id="mlf"><label class="wide">Current medications<textarea name="text" rows="12">${esc(text)}</textarea></label>
+    <label>List date<input name="as_of" type="text" value="${today}" placeholder="YYYY-MM-DD"></label></form>
+    <div class="row-actions"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="preview">Show changes</button></div><p class="muted small" id="msg"></p>`);
+  $('#cancel').onclick = () => dlg.close();
+  $('#preview').onclick = async () => {
+    const f = new FormData($('#mlf')), body = {text: f.get('text'), as_of: f.get('as_of').trim()};
+    let p;
+    try{ p = await api('/api/medications/current-list', {method:'POST', body:JSON.stringify(body)}); }
+    catch(e){ $('#msg').textContent = e.message; return; }
+    const li = a => a.length ? `<ul>${a.join('')}</ul>` : '<p class="muted small">None.</p>';
+    const doseNote = k => k.dose_from && k.dose && k.dose.replace(/\.0\b|\s/g,'').toLowerCase() !== k.dose_from.replace(/\.0\b|\s/g,'').toLowerCase() ? ` <span class="tag warn">dose ${esc(k.dose_from)} → ${esc(k.dose)}</span>` : '';
+    show('Changes from the list',
+      `<h3>Taking now (${p.keep.length + p.add.length})</h3>` +
+      li(p.keep.map(k => `<li><b>${esc(k.line)}</b> <span class="muted small">is ${esc(k.name)}</span>${doseNote(k)}</li>`)
+        .concat(p.add.map(a => `<li><b>${esc(a.line)}</b> <span class="tag">new entry, start date unknown</span></li>`))) +
+      (p.merge.length ? `<h3>Same medicine listed twice (${p.merge.length})</h3>` + li(p.merge.map(m => `<li>${esc(m.name)} <span class="muted small">joins ${esc(m.into_name)}</span></li>`)) : '') +
+      `<h3>Stopped by ${fdate(p.as_of)} (${p.stop.length})</h3><p class="muted small" style="margin-top:-4px">Marked active in the records but not on this list. Their stop date is set to the list's date, since the real one isn't known.</p>` +
+      li(p.stop.map(x => `<li>${esc(x.name)} <span class="muted small">${x.start_date ? 'since ' + fdate(x.start_date) : ''}</span></li>`)) +
+      `<div class="row-actions"><button class="btn" id="back">Back</button><button class="btn primary" id="apply">Save these changes</button></div><p class="muted small" id="msg"></p>`);
+    $('#back').onclick = () => pasteMedList(body.text);
+    $('#apply').onclick = async () => {
+      $('#apply').disabled = true;
+      try{ await api('/api/medications/current-list', {method:'POST', body:JSON.stringify({...body, apply:true})}); }
+      catch(e){ $('#msg').textContent = e.message; $('#apply').disabled = false; return; }
+      dlg.close(); invalidate(); render();
+    };
+  };
 }
 
 function editRecord(kind, r){
@@ -598,7 +702,7 @@ function editRecord(kind, r){
     if(f==='abnormal') return `<label>Abnormal<select name="${f}"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes</option></select></label>`;
     if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
     if(LONG.has(f)) return `<label class="wide">${f.replace(/_/g,' ')}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
-    return `<label>${f.replace(/_/g,' ')}<input name="${f}" type="${type}" value="${esc(v)}"></label>`;
+    return `<label>${f.replace(/_/g,' ')}<input name="${f}" type="${type}" value="${esc(v)}"${f==='facility'?' list="places" autocomplete="off"':''}></label>`;
   }).join('');
   show(`<h2>${isNew?'Add':'Edit'} ${KIND_LABEL[kind].toLowerCase()}</h2>`,
     `<form class="edit" id="ef">${inputs}${r.needs_review?'<label class="wide" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" name="clear_review" checked> Mark as reviewed</label>':''}</form><div class="row-actions">${isNew?'':'<button class="btn danger" id="del">Delete</button>'}<button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div><p class="muted small" id="msg"></p>`);
@@ -614,17 +718,36 @@ function editRecord(kind, r){
       await render(); openRecord(kind, out.id);
     }catch(e){ $('#msg').textContent = e.message; }
   };
-  if(!isNew) $('#del').onclick = async () => { if(!confirm('Delete this entry? The source document is not affected.')) return; await api(`/api/${kind}/${encodeURIComponent(r.id)}`, {method:'DELETE'}); dlg.close(); invalidate(); render(); };
+  if(!isNew) $('#del').onclick = async () => { if(!await deleteItem(kind, r.id)) return; dlg.close(); render(); };
 }
 
-async function openDoc(id){
+// pages of a document that mention a date (YYYY-MM-DD or YYYY-MM), for files that cover several visits
+function pagesFor(text, date, end){
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(date || ''); if(!m || !text) return [];
+  const sep = '[/.(\\-]', pat = (y, mo, da) => `\\b0?${+mo}${sep}${da ? '0?' + (+da) : '\\d{1,2}'}${sep}(?:${y}|${y.slice(2)})\\b|\\b${y}-${mo}-${da || '\\d{2}'}\\b`;
+  const days = [];
+  if(m[3]){   // every day of a stay (up to a month), so pages about later days count too
+    const t0 = new Date(+m[1], +m[2]-1, +m[3]), e = /^\d{4}-\d{2}-\d{2}/.test(end || '') ? new Date(+end.slice(0,4), +end.slice(5,7)-1, +end.slice(8,10)) : t0;
+    for(let t = new Date(t0); t <= e && days.length < 31; t.setDate(t.getDate()+1))
+      days.push(pat(String(t.getFullYear()), String(t.getMonth()+1).padStart(2,'0'), String(t.getDate()).padStart(2,'0')));
+  } else days.push(pat(m[1], m[2]));
+  const re = new RegExp(days.join('|'));
+  return text.split('\f').map((t, i) => re.test(t) ? i + 1 : 0).filter(Boolean);
+}
+function pageRanges(ps){
+  const out = []; ps.forEach(p => { const last = out[out.length-1]; if(last && p === last[1] + 1) last[1] = p; else out.push([p, p]); });
+  return out.map(([a, b]) => a === b ? `${a}` : `${a}–${b}`).join(', ');
+}
+async function openDoc(id, focusDate, focusEnd){
   const d = await api('/api/documents/' + id);
+  const npages = d.text ? d.text.split('\f').length : 0;
+  const focus = pagesFor(d.text, focusDate, focusEnd), partial = focus.length && focus.length < npages;
   const viewable = d.has_file && ['.pdf','.jpg','.jpeg','.png','.txt','.html'].includes(d.ext);
   const audio = d.has_file && d.ext === '.wav';
   const linked = d.linked.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> ${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</div>`).join('');
   show(`<h2>${esc(d.title)}</h2><div class="muted small">${fdate(d.doc_date)}${d.facility?' · '+esc(d.facility):''} · ${esc(d.category||'')}</div>`,
-    `<div class="docview"><div>${viewable?`<iframe src="${fileUrl(d.id)}" title="document" ${d.ext==='.html'?'sandbox=""':''}></iframe>`: audio?`<audio controls src="${fileUrl(d.id)}" style="width:100%"></audio>`:''}
-      ${d.text?`<h3>${viewable?'Text (searchable)':'Text'}${d.ocr_pages.length?' <span class="tag">read from scan, may contain errors</span>':''}</h3><div class="doctext">${esc(d.text).replace(/\f/g,'\n\n──── next page ────\n\n')}</div>`:''}
+    `${partial?`<div class="ask-box">This file covers more than one visit. The part about <b>${fdate(focusDate)}</b> is on page${focus.length>1?'s':''} <b>${pageRanges(focus)}</b> of ${npages}${viewable && d.ext==='.pdf'?'; it opens there':''}. Those pages are marked in the text below.</div>`:''}<div class="docview"><div>${viewable?`<iframe src="${fileUrl(d.id)}${partial && d.ext==='.pdf' ? '#page=' + focus[0] : ''}" title="document" ${d.ext==='.html'?'sandbox=""':''}></iframe>`: audio?`<audio controls src="${fileUrl(d.id)}" style="width:100%"></audio>`:''}
+      ${d.text?`<h3>${viewable?'Text (searchable)':'Text'}${d.ocr_pages.length?' <span class="tag">read from scan, may contain errors</span>':''}</h3><div class="doctext" id="dtext">${d.text.split('\f').map((t, i) => `<div class="pg${partial && focus.includes(i+1) ? ' hl' : ''}" id="pg${i+1}">${npages > 1 ? `<div class="pgno">Page ${i+1}</div>` : ''}${esc(t)}</div>`).join('')}</div>`:''}
       ${!d.has_file?'<p class="muted">The file itself is not on the dashboard (too large, or a disc image). It is in the records folder.</p>':''}</div>
       <div>${d.summary?`<p>${esc(d.summary)}</p>`:''}<div class="kv"><div>File</div><div class="small">${esc(d.organized_path||d.path)}</div><div>Original</div><div class="small">${esc(d.orig_path||'')}</div><div>Pages</div><div>${d.pages??''}</div></div>
       ${d.has_file?`<p><a class="btn" href="${fileUrl(d.id, '&download=1')}">Download</a> <a class="btn" href="${fileUrl(d.id)}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
@@ -636,9 +759,9 @@ async function openDoc(id){
       <form class="edit" id="df" style="grid-template-columns:1fr">
         <label>Title<input name="title" value="${esc(d.title||'')}"></label><label>Date<input name="doc_date" value="${esc(d.doc_date||'')}" placeholder="YYYY-MM-DD"></label>
         <label>Kind<select name="category">${['hospital','office','imaging','labs','procedures','tests','eye','dental','medications','financial','legal','other'].map(c=>`<option ${c===d.category?'selected':''}>${c}</option>`).join('')}</select></label>
-        <label>From<input name="facility" value="${esc(d.facility||'')}"></label>
+        <label>From<input name="facility" list="places" autocomplete="off" value="${esc(d.facility||'')}"></label>
         <label>Summary<textarea name="summary" rows="3">${esc(d.summary||'')}</textarea></label></form>
-      <div class="row-actions"><button class="btn" id="dmove" title="This document is someone else's">Move to…</button>${(d.path||'').startsWith('Uploaded/')?'<button class="btn danger" id="ddel">Delete this upload</button>':''}<button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+      <div class="row-actions"><button class="btn" id="dmove" title="This document is someone else's">Move to…</button><button class="btn danger" id="ddel">${(d.path||'').startsWith('Uploaded/')?'Delete this upload':'Remove from dashboard'}</button><button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
   $('#dmove').onclick = async () => {
     const others = PEOPLE.filter(p => p.id !== PERSON);
     show('<h2>Move to another person</h2>', `<p>Moves <b>${esc(d.title)}</b>, its file, and the entries made only from it.
@@ -658,9 +781,9 @@ async function openDoc(id){
       }catch(e){ $('#mmsg').textContent = e.message; }
     };
   };
+  if(partial){ const box = $('#dtext'), pg = $('#pg' + focus[0]); if(box && pg) box.scrollTop = pg.offsetTop - box.offsetTop; }
   if($('#ddel')) $('#ddel').onclick = async () => {
-    if(!confirm(`Delete "${d.title}" and anything that was read from it? The original file on your computer is not affected.`)) return;
-    try{ await api('/api/documents/' + id, {method:'DELETE'}); $('#dlg').close(); invalidate(); render(); }catch(e){ $('#dmsg').textContent = e.message; }
+    try{ if(!await deleteItem('documents', id, (d.path||'').startsWith('Uploaded/'))) return; $('#dlg').close(); render(); }catch(e){ $('#dmsg').textContent = e.message; }
   };
   if($('#dretry')) $('#dretry').onclick = async () => {
     try{ await api('/api/documents/' + id + '/retry', {method:'POST'}); $('#dlg').close(); const t = trayItem(d.orig_path||d.title); t.status('Reading and sorting…'); watchUpload(id, t); }

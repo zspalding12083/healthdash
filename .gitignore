@@ -20,8 +20,11 @@ __pycache__/
 *.pyc
 .DS_Store
 deploy/local.env
-# the one demo screenshot (made-up sample data)
+# demo screenshots (made-up sample data only)
 !docs/screenshot.jpg
+!docs/medications.png
+!docs/lab-trends.png
+!docs/needs-review.png
 dist/
 # the plugin's own icons (not records)
 !browser-extension/firefox/icon-*.png

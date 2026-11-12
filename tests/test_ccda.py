@@ -143,6 +143,100 @@ class CcdaTests(unittest.TestCase):
             self.assertEqual(store.consolidate_meds(C.drug_key, C.record_ids), {"lines": 3, "entries": 3})  # stable
             store.close()
 
+    def test_over_the_counter_meds_have_no_start_or_stop(self):
+        from healthdash import ccda as C
+        from healthdash.store import is_otc
+        self.assertTrue(is_otc("Tylenol CAPS"))
+        self.assertTrue(is_otc("Loratadine (CLARITIN) 10 MG Oral Tab"))
+        self.assertFalse(is_otc("Oxycodone-Acetaminophen 5-325 MG Oral Tablet"))
+        self.assertFalse(is_otc("naproxen 500 mg oral tablet"))
+        self.assertFalse(is_otc("Examplol 10 MG Oral Tablet"))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_imported("medications", [
+                {"id": "ccda-med-a", "name": "Advil TABS", "start_date": "2019-01-01", "end_date": "2019-02-01", "status": "stopped"},
+                {"id": "ccda-med-b", "name": "Advil TABS", "start_date": "2024-06-01", "status": "active", "needs_review": True},
+                {"id": "ccda-med-c", "name": "Examplol 10 MG Oral Tablet", "start_date": "2020-01-01", "status": "active"},
+            ])
+            self.assertEqual(store.consolidate_meds(C.drug_key, C.record_ids), {"lines": 3, "entries": 2})  # years apart, still one
+            otc = [m for m in store.list("medications") if m["otc"]]
+            store.set_otc({"words": ["Samplocet"], "not": [r"samplocet\s*900"]})        # more names, kept private
+            self.assertTrue(store.is_otc("Samplocet 300 mg") and not store.is_otc("Samplocet 900 mg"))
+            self.assertEqual(len(otc), 1)
+            titles = [e["title"] for e in store.timeline() if e["kind"] == "medications"]
+            self.assertEqual(titles, ["Started Examplol 10 MG Oral Tablet"])
+            self.assertEqual([m["name"] for m in store.summary()["current_meds"]], ["Examplol 10 MG Oral Tablet"])
+            store.close()
+
+    def test_current_medication_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_imported("medications", [
+                {"id": "ccda-med-a", "name": "Examplol 10 MG Oral Tablet", "dose": "10.0 mg", "start_date": "2020-01-01", "status": "active", "docs": ["d1", "d2"]},
+                {"id": "ccda-med-b", "name": "Brandol XL", "dose": "10 mg", "start_date": "2022-01-01", "status": "active", "docs": ["d3"]},
+                {"id": "ccda-med-c", "name": "Fakeazole 500 MG", "start_date": "2021-01-01", "status": "active"},
+                {"id": "ccda-med-d", "name": "Samplorin 20 MG", "start_date": "2019-01-01", "end_date": "2019-05-01", "status": "stopped"},
+                {"id": "ccda-med-e", "name": "Tylenol CAPS", "start_date": "2018-01-01", "status": "active"},
+            ])
+            store.db.execute("CREATE TABLE IF NOT EXISTS drug_alias (brand TEXT PRIMARY KEY, generic TEXT)")
+            store.db.execute("INSERT INTO drug_alias VALUES ('brandol', 'examplol')")
+            text = "Examplol 10MG\nSamplorn 20mg\nNewdrug 5 mg\n"
+            plan = store.apply_med_list(text, "2026-01-15")
+            self.assertEqual([k["id"] for k in plan["keep"]], ["ccda-med-a"])
+            self.assertEqual([m["id"] for m in plan["merge"]], ["ccda-med-b"])        # the same drug under its brand
+            self.assertEqual([x["id"] for x in plan["stop"]], ["ccda-med-c"])         # over-the-counter Tylenol is left alone
+            self.assertEqual([a["name"] for a in plan["add"]], ["Samplorin", "Newdrug"])   # stopped in 2019: a new period
+            self.assertEqual(store.get("medications", "ccda-med-a")["status"], "active")   # nothing saved yet
+            store.apply_med_list(text, "2026-01-15", apply=True)
+            a = store.get("medications", "ccda-med-a")
+            self.assertEqual((a["dose"], a["docs"]), ("10 mg", ["d1", "d2", "d3"]))
+            self.assertNotIn("Earlier records", a["notes"])                            # 10.0 mg is 10 mg
+            c = store.get("medications", "ccda-med-c")
+            self.assertEqual((c["status"], c["end_date"]), ("stopped", "2026-01-15"))
+            self.assertIsNone(store.get("medications", "ccda-med-b"))
+            self.assertEqual(len(store.summary()["current_meds"]), 3)
+            again = store.apply_med_list(text, "2026-01-15")
+            self.assertEqual((len(again["stop"]), len(again["add"]), len(again["merge"])), (0, 0, 0))
+            with self.assertRaises(Exception):
+                store.apply_med_list("", "2026-01-15")
+            store.close()
+
+    def test_people_on_a_provider_line(self):
+        from healthdash.ccda import people, doctor_key
+        self.assertEqual(people("Dr. Pat Example (attending); ER: Dr. Sam Sample"), ["Dr. Pat Example", "Dr. Sam Sample"])
+        self.assertEqual(doctor_key("Dr. Pat Example (cardiology)"), doctor_key("Pat Q. Example MD"))
+        self.assertEqual(doctor_key("Referring: Lee Demo, RPA-C"), "lee demo")
+
+    def test_duplicates_merge(self):
+        from healthdash.uploads import refresh_doctors
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_imported("providers", [{"id": "doc-pat", "name": "Dr. Pat Example", "specialty": "Cardiology"},
+                                                {"id": "ccda-doctor-old", "name": "Dr. Pat Example (cardiology)"}])
+            store.upsert_imported("encounters", [
+                {"id": "e1", "date": "2020-01-01", "provider": "Dr. Pat Example (cardiology)", "facility": "EXAMPLE GENERAL", "docs": ["d1"]},
+                {"id": "e2", "date": "2020-02-01", "provider": "Pat Q. Example MD; ER: Sam Sample DO", "facility": "Example General", "docs": ["d2"]},
+                {"id": "e3", "date": "2020-03-01", "provider": "Sam Sample DO", "facility": "EGH / EGH", "docs": ["d3"]},
+                {"id": "e4", "date": "2020-04-01", "facility": "Example General", "docs": []},
+            ])
+            store.upsert_imported("procedures", [
+                {"id": "proc-1", "date": "2019-05-02", "name": "Left knee arthroscopy with meniscus repair", "docs": ["d4"]},
+                {"id": "ccda-proc-a", "date": "2019-05", "name": "Arthroscopy Knee (Left)", "docs": ["d5"]},
+                {"id": "ccda-proc-b", "date": "2019-05-02", "name": "Collection of venous blood", "docs": ["d6"]},
+            ])
+            store.set_place_names({"Example General Hospital": ["EGH"]})
+            store.tidy_places()
+            self.assertEqual(store.places()[0], "Example General")                  # most used first
+            self.assertEqual({e["facility"] for e in store.list("encounters")}, {"Example General", "Example General Hospital"})
+            self.assertEqual(store.merge_imported_procedures(), 1)            # the blood draw isn't the same procedure
+            self.assertEqual(store.get("procedures", "proc-1")["docs"], ["d4", "d5"])
+            self.assertIsNone(store.get("procedures", "ccda-proc-a"))
+            refresh_doctors(store)
+            names = sorted(p["name"] for p in store.list("providers"))
+            self.assertEqual(names, ["Dr. Pat Example", "Sam Sample DO"])
+            self.assertEqual(sorted(store.get("providers", "doc-pat")["docs"]), ["d1", "d2"])
+            store.close()
+
     def test_refuses_entities(self):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')
@@ -176,6 +270,34 @@ class CcdaTests(unittest.TestCase):
             self.assertTrue(up.add('again.zip', buf.getvalue())['duplicate'])
             store.close()
 
+
+
+class DoctorTests(unittest.TestCase):
+    def test_names_and_places(self):
+        self.assertEqual(ccda.doctor_key('Pat Q. Example MD'), ccda.doctor_key('Pat Example'))
+        self.assertEqual(ccda.doctor_key('Lee R. Sample PA-C'), 'lee sample')
+        self.assertIsNone(ccda.doctor_key('MD ER'))
+        self.assertEqual(ccda.place('Riverside Clinic', 'Riverside Clinic'), 'Riverside Clinic')
+        self.assertEqual(ccda.place('Lab', None, 'Sample Hospital'), 'Lab / Sample Hospital')
+
+    def test_doctors_come_from_imported_visits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, 't.db'))
+            store.upsert_imported('encounters', [
+                {'id': 'ccda-visit-1', 'date': '2020-01-02', 'provider': 'Pat Example', 'facility': 'Riverside Clinic / Riverside Clinic', 'docs': ['d1']},
+                {'id': 'ccda-visit-2', 'date': '2021-05-06', 'provider': 'Pat Q. Example MD', 'facility': 'Riverside Clinic', 'docs': ['d2']},
+                {'id': 'ccda-visit-3', 'date': '2021-05-07', 'provider': 'MD ER', 'facility': 'Sample Hospital'},
+                {'id': 'ccda-visit-4', 'date': '2022-01-01', 'provider': 'Lee Sample', 'facility': 'Sample Hospital'}])
+            store.create('providers', {'name': 'Dr. Lee Sample', 'specialty': 'Cardiology'})
+            up = Uploads(store, os.path.join(tmp, 'f'), recheck=0)
+            rows = up.doctors()
+            self.assertEqual([r['name'] for r in rows], ['Pat Q. Example MD'])   # Lee Sample was entered by hand
+            self.assertEqual(rows[0]['facility'], 'Riverside Clinic')
+            self.assertIn('2 visits, 2020-01-02 to 2021-05-06', rows[0]['notes'])
+            self.assertEqual(sorted(rows[0]['docs']), ['d1', 'd2'])
+            store.tidy_imported_places(ccda.place)
+            self.assertEqual(store.get('encounters', 'ccda-visit-1')['facility'], 'Riverside Clinic')
+            store.close()
 
 
 class MergeOrderTests(unittest.TestCase):
