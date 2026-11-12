@@ -153,6 +153,20 @@ It creates the service `healthdash-alex` with its data in `/var/lib/healthdash-a
 account right away. In the Firefox plugin, add it as another dashboard; the popup's **Save to** picks
 whose dashboard gets what you save (useful with MyChart's family access).
 
+## Getting everything out of a patient portal
+
+Several portals can export every visit at once. Drop the file they give you on the dashboard
+(**Add records**); it reads the health summaries inside, skips anything it already has, and files the rest.
+
+- **MyChart** (Epic): open `/MyChart/app/requested-records` on your MyChart site and request all
+  visits. The download is a `HealthSummary_*.zip`.
+- **FollowMyHealth**: open the **My Health** menu, choose **Send**, then export. The download is a zip
+  (`AllPatientData.zip`).
+- **IQHealth / HealtheLife** (Oracle Health, formerly Cerner): on `iqhealth.com`, open your health
+  record's sharing page, `/person/<your id>/health-record/sharing/`, and download the health summary.
+
+For anything a portal won't export in bulk, the plugin below saves pages one at a time as you read them.
+
 ## Firefox plugin: save records as you view them
 
 Patient portals (MyChart, FollowMyHealth, HealtheLife and others) rarely offer a bulk download. The
