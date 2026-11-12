@@ -428,6 +428,30 @@ _CREDENTIALS = {'md', 'do', 'pa', 'pac', 'np', 'fnp', 'aprn', 'rn', 'dpm', 'dds'
                 'facc', 'facog', 'msn', 'mph', 'crna', 'anp', 'cnm', 'dnp', 'lcsw', 'rpac', 'cot', 'mbbs', 'pt', 'dpt', 'ms', 'dr', 'jr', 'sr', 'ii', 'iii'}
 
 
+def radiology_reports(text):
+    """Imaging reports written out in a summary's "Radiology Results" section ("Order: CT Head",
+    "Exam Completion Date:10/28/2026 19:24", the report, "IMPRESSION: ...", "Electronically Signed
+    by: ...") -> [{name, date, result, provider}]."""
+    i = (text or '').find('Radiology Results')
+    if i < 0:
+        return []
+    out = []
+    parts = re.split(r'\bOrder:\s*', text[i:])[1:]
+    for part in parts:
+        m = re.match(r'(.{3,90}?)\s+Exam Completion Date:\s*(\d{1,2})/(\d{1,2})/(\d{4})', part, re.S)
+        if not m:
+            continue
+        name = re.sub(r'\s+', ' ', m.group(1)).strip()
+        date = f'{m.group(4)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}'
+        body = re.sub(r'\s+', ' ', part[m.end():])
+        body = re.split(r'\*{4,}|\b(Laboratory|Pathology|Microbiology) Results\b', body)[0]
+        imp = re.search(r'IMPRESSION:\s*(.+?)(?:Electronically Signed|Signature Date|$)', body, re.I)
+        who = re.search(r'Electronically Signed by:\s*([A-Z][A-Za-z.\' -]{2,40}?)\s+Signature', body)
+        result = (imp.group(1) if imp else re.sub(r'^.*?Result Status\s*:\s*\w+\s*', '', body))[:600].strip()
+        out.append({'name': name, 'date': date, 'result': result or None, 'provider': who.group(1).strip() if who else None})
+    return out
+
+
 def people(line):
     """The people one provider line names: "Dr. Pat Example (attending); ER: Dr. Sam Sample" ->
     ["Dr. Pat Example", "Dr. Sam Sample"], with notes in brackets and labels like "ER:" taken off."""

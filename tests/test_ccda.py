@@ -237,6 +237,51 @@ class CcdaTests(unittest.TestCase):
             self.assertEqual(sorted(store.get("providers", "doc-pat")["docs"]), ["d1", "d2"])
             store.close()
 
+    def test_sources_and_conditions_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_imported("medications", [
+                {"id": "med-examplol", "name": "Examplol (Brandol)", "start_date": "2020-01-01", "status": "active", "docs": ["d1"]},
+                {"id": "ccda-med-a", "name": "Examplol 10 MG Oral Tablet", "start_date": "2021-03-01", "status": "active", "docs": ["d2"]},
+                {"id": "ccda-med-b", "name": "Examplol 10 MG Oral Tablet", "start_date": "2010-01-01", "end_date": "2010-02-01", "status": "stopped"},
+                {"id": "ccda-med-c", "name": "Fakeazole 500 MG", "start_date": "2021-01-01", "status": "active"},
+            ])
+            self.assertEqual(store.merge_med_sources(), 1)          # the 2010 course is another period
+            self.assertEqual(store.get("medications", "med-examplol")["docs"], ["d1", "d2"])
+            self.assertIsNone(store.get("medications", "ccda-med-a"))
+            store.upsert_imported("conditions", [
+                {"id": "ccda-cond-1", "name": "Sample syndrome(Confirmed)", "status": "resolved", "first_noted": "2015-04-01"},
+                {"id": "ccda-cond-2", "name": "Sample syndrome (Problem)", "status": "active", "first_noted": "1901-01-01"},
+                {"id": "ccda-cond-3", "name": "Sample syndrome 2", "status": "active", "docs": ["d3"]},
+                {"id": "ccda-cond-4", "name": "Hx of demo fracture", "status": "resolved"},
+                {"id": "cond-demo", "name": "History of demo fracture", "status": "resolved", "first_noted": "2001"},
+            ])
+            self.assertEqual(store.merge_conditions(), 3)
+            names = {c["name"]: c for c in store.list("conditions")}
+            self.assertEqual(sorted(names), ["History of demo fracture", "Sample syndrome"])
+            self.assertEqual((names["Sample syndrome"]["status"], names["Sample syndrome"]["first_noted"]), ("active", "2015-04-01"))
+            store.close()
+
+    def test_imaging_reports_in_a_summary(self):
+        from healthdash.uploads import imaging_from_summaries
+        text = ("Radiology Results ******** Order: XR Wrist LEFT Exam Completion Date:3/4/2024 10:05 Result Status : completed "
+                "FINDINGS: Normal. IMPRESSION: No fracture. Electronically Signed by: Pat Example Signature Date:3/4/2024 "
+                "Order: CT Head w/o IV contrast Exam Completion Date:03/04/2024 11:00 Result Status : completed IMPRESSION: Normal CT head. "
+                "******** Laboratory Results ******** Order: CBC")
+        self.assertEqual([(r["name"], r["date"], r["result"], r["provider"]) for r in ccda.radiology_reports(text)],
+                         [("XR Wrist LEFT", "2024-03-04", "No fracture.", "Pat Example"),
+                          ("CT Head w/o IV contrast", "2024-03-04", "Normal CT head.", None)])
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_documents([{"id": "a" * 64, "path": "Imported/x.html", "title": "Hospital stay", "ext": ".html",
+                                     "facility": "Example General", "text": text, "needs_review": False}])
+            store.upsert_imported("tests", [{"id": "test-ct", "date": "2024-03-04", "category": "imaging", "name": "CT head without contrast"}])
+            imaging_from_summaries(store)
+            names = sorted(t["name"] for t in store.list("tests"))
+            self.assertEqual(names, ["CT head without contrast", "XR Wrist LEFT"])      # the CT joins the detailed entry
+            self.assertEqual(store.get("tests", "test-ct")["docs"], ["a" * 64])
+            store.close()
+
     def test_refuses_entities(self):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')

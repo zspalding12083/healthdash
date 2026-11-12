@@ -417,6 +417,10 @@ class Uploads:
         self.store.tidy_imported_places(ccda.place)
         self.store.tidy_places()
         self.store.merge_imported_procedures()
+        imaging_from_summaries(self.store)
+        self.store.merge_imported_procedures('tests')
+        self.store.merge_med_sources()
+        self.store.merge_conditions()
         counts['providers'] = refresh_doctors(self.store)
         added = {k: v['added'] + v['updated'] for k, v in counts.items()}
         added['medications'] = merged['entries']
@@ -510,3 +514,28 @@ def refresh_doctors(store, write=True):
         for x in docs[:max(0, 40 - have)]:
             store.link_doc('providers', mine[key]['id'], x)
     return store.upsert_imported('providers', rows)
+
+
+def imaging_from_summaries(store):
+    """Imaging reports written out in the "Radiology Results" section of imported health
+    summaries become Tests & imaging entries (one per study and date, linked to every summary
+    that has it), unless the same study is already entered in detail that day."""
+    from . import ccda
+    rads = {}
+    found = store.db.execute("SELECT id, facility, text FROM documents WHERE text LIKE '%Radiology Results%' "
+                             "ORDER BY doc_date DESC").fetchall()
+    for did, facility, text in found:
+        d = {'id': did, 'facility': facility}
+        for rp in ccda.radiology_reports(text):
+            k = (rp['name'].lower(), rp['date'])
+            if k in rads:
+                if d['id'] not in rads[k]['docs']:
+                    rads[k]['docs'].append(d['id'])
+            else:
+                rads[k] = dict(rp, docs=[d['id']], facility=d.get('facility'))
+    rows = [{'id': ccda.record_ids('rad', r['name'], r['date']), 'docs': r['docs'][:40], 'date': r['date'],
+             'category': 'imaging', 'name': r['name'], 'result': r['result'], 'provider': r['provider'],
+             'facility': r['facility']} for r in rads.values()]
+    out = store.upsert_imported('tests', rows) if rows else {'added': 0, 'updated': 0, 'skipped_edited': 0}
+    store.merge_imported_procedures('tests')
+    return out

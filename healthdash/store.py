@@ -540,7 +540,7 @@ class Store:
                 n[f] += c
         return [f for f, _ in n.most_common()]
 
-    def merge_imported_procedures(self):
+    def merge_imported_procedures(self, kind='procedures'):
         """A procedure from a health summary that is also entered in detail (same date, give or take
         a day, or the same month when only the month is known, and a word of the name in common)
         is folded into the detailed entry: its documents are linked there and it is removed, so a
@@ -550,19 +550,20 @@ class Store:
             for short, full in PROCEDURE_SHORT:
                 n = re.sub(short, ' ' + full + ' ', n)
             return {w for w in re.findall(r'[a-z]{4,}', n)
-                    if w not in ('left', 'right', 'with', 'lumbar', 'none', 'history', 'procedure', 'implants')}
+                    if w not in ('left', 'right', 'with', 'lumbar', 'none', 'history', 'procedure', 'implants',
+                                 'without', 'contrast', 'view', 'views', 'portable', 'bilateral', 'unilateral')}
         def related(a, b):
             return any(x in y or y in x for x in words(a) for y in words(b))
         merged = 0
-        for r in self.list('procedures'):
+        for r in self.list(kind):
             if not (r['id'] or '').startswith('ccda-') or r.get('edited') or not r.get('date'):
                 continue
-            match = [x for x in self.same_day('procedures', r['date'], days=1) if related(x['name'], r['name'])]
+            match = [x for x in self.same_day(kind, r['date'], days=1 if kind == 'procedures' else 0) if related(x['name'], r['name'])]
             if not match:
                 continue
             for d in r['docs']:
-                self.link_doc('procedures', match[0]['id'], d)
-            self.delete('procedures', r['id'])
+                self.link_doc(kind, match[0]['id'], d)
+            self.delete(kind, r['id'])
             merged += 1
         return merged
 
@@ -734,15 +735,10 @@ class Store:
             self._otc = (yes, no)
         return is_otc(name, self._otc)
 
-    def apply_med_list(self, text, as_of, apply=False):
-        """A current medication list ("Topiramate 100mg", one per line) set against the records:
-        listed drugs stay or become active with the listed dose, other active prescriptions are
-        stopped as of that date, and a drug listed under two names keeps one entry. Over-the-counter
-        entries that aren't listed are left alone. With apply=False, only says what would change."""
-        import difflib
+    def _drug_keys(self):
+        """(key(name), root(word), parent): one key per drug, brand and generic names joined
+        through what the records taught (drug_alias)."""
         from .ccda import drug_key
-        if not DATE_RE.match(as_of or '') or len(as_of) != 10:
-            raise ValidationError('the list date must look like YYYY-MM-DD')
         self.db.execute('CREATE TABLE IF NOT EXISTS drug_alias (brand TEXT PRIMARY KEY, generic TEXT)')
         parent = {}
 
@@ -763,6 +759,98 @@ class Store:
                 inner = re.search(r'\(([^()]+)', name or '')
                 k = drug_key(inner.group(1)) if inner else k
             return root(k)
+        return key, root, parent
+
+    def merge_med_sources(self, slack_days=60):
+        """A medication line from a health summary for a drug that is also entered by hand (or
+        edited) over the same time is folded into that entry: its documents are linked there and
+        it is removed, so the drug isn't listed twice. Returns how many were merged."""
+        from datetime import date as D, timedelta
+        key, _, _ = self._drug_keys()
+        today = D.today()
+
+        def span(r):
+            def d(v, end=False):
+                v = v or ''
+                try:
+                    return D.fromisoformat(v[:10] if len(v) >= 10 else (v + ('-28' if end else '-01'))[:10] if len(v) == 7
+                                           else (v + ('-12-31' if end else '-01-01')))
+                except ValueError:
+                    return None
+            s0 = d(r['start_date'])
+            e0 = d(r['end_date'], True) or (today if r['status'] != 'stopped' else s0)
+            return s0, e0
+        meds = self.list('medications')
+        mine = [m for m in meds if not (m['id'] or '').startswith('ccda-') or m.get('edited')]
+        by_key = {}
+        for m in mine:
+            by_key.setdefault(key(m['name']), []).append(m)
+        merged = 0
+        for r in meds:
+            if r in mine:
+                continue
+            rs, re_ = span(r)
+            for m in by_key.get(key(r['name']), []):
+                ms, me = span(m)
+                if not (rs and ms and re_ and me):
+                    continue
+                if rs <= me + timedelta(days=slack_days) and ms <= re_ + timedelta(days=slack_days):
+                    for x in r['docs']:
+                        self.link_doc('medications', m['id'], x)
+                    self.delete('medications', r['id'])
+                    merged += 1
+                    break
+        return merged
+
+    def merge_conditions(self):
+        """One entry per condition: names that differ only by labels like "(Confirmed)" or
+        "(Problem)", a trailing number, capitals or "Hx of" are one. The entry kept is a hand-made
+        one if there is one; it is active if any copy is, noted from the earliest real date, and
+        linked to every copy's documents. Returns how many were merged."""
+        def clean(n):
+            n = re.sub(r'\((confirmed|provisional|problem|disorder|finding|diagnosis)\)', ' ', n or '', flags=re.I)
+            n = re.sub(r'\s+\d+\s*$', '', n)
+            n = re.sub(r'^\s*hx\.? of\b', 'History of', n, flags=re.I)
+            return re.sub(r'\s+', ' ', n).strip(' ,.-')
+        groups = {}
+        for c in self.list('conditions'):
+            groups.setdefault(clean(c['name']).lower(), []).append(c)
+        merged = 0
+        for k, rows in groups.items():
+            if not k:
+                continue
+            mine = [r for r in rows if not (r['id'] or '').startswith('ccda-') or r.get('edited')]
+            keep = mine[0] if mine else min(rows, key=lambda r: (len(clean(r['name'])) != len(r['name'].strip()), r['first_noted'] is None, r['id']))
+            dates = [r['first_noted'] for r in rows if r['first_noted'] and r['first_noted'][:4] >= '1910']
+            vals = {}
+            if not mine:
+                vals['name'] = clean(keep['name'])
+                vals['status'] = 'active' if any(r['status'] == 'active' for r in rows) else keep['status']
+            if dates and min(dates) != keep['first_noted'] and not keep.get('edited'):
+                vals['first_noted'] = min(dates)
+            if vals and len(rows) > 1 or vals.get('name', keep['name']) != keep['name']:
+                with self.lock:   # not a person's edit: a later import may still update it
+                    self.db.execute(f"UPDATE conditions SET {', '.join(f + '=?' for f in vals)} WHERE id=?", [*vals.values(), keep['id']])
+                    self.db.commit()
+            for r in rows:
+                if r['id'] == keep['id'] or r in mine:
+                    continue
+                for x in r['docs']:
+                    self.link_doc('conditions', keep['id'], x)
+                self.delete('conditions', r['id'])
+                merged += 1
+        return merged
+
+    def apply_med_list(self, text, as_of, apply=False):
+        """A current medication list ("Topiramate 100mg", one per line) set against the records:
+        listed drugs stay or become active with the listed dose, other active prescriptions are
+        stopped as of that date, and a drug listed under two names keeps one entry. Over-the-counter
+        entries that aren't listed are left alone. With apply=False, only says what would change."""
+        import difflib
+        from .ccda import drug_key
+        if not DATE_RE.match(as_of or '') or len(as_of) != 10:
+            raise ValidationError('the list date must look like YYYY-MM-DD')
+        key, root, parent = self._drug_keys()
         meds = self.list('medications')
         current = [m for m in meds if m['status'] == 'active' or (not m['end_date'] and not m['status'])]
         known = sorted({key(m['name']) for m in meds})

@@ -361,6 +361,10 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 from .uploads import refresh_doctors
                 result['places_renamed'] = st.tidy_places()
                 result['procedures_merged'] = st.merge_imported_procedures()
+                from .uploads import imaging_from_summaries
+                result['imaging_reports'] = imaging_from_summaries(st)
+                result['medications_merged'] = st.merge_med_sources()
+                result['conditions_merged'] = st.merge_conditions()
                 result['doctors'] = refresh_doctors(st)
             return result
 
