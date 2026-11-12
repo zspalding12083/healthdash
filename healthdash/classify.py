@@ -262,7 +262,7 @@ def guess_category(text, labs=0, filename=''):
         return 'labs', True, s
     if labs >= 3:
         s['labs'] = max(0, s['labs'] - 3)  # lab tables inside a note don't make it a lab report
-    # an estimate or bill from the dentist is a dental record; its price goes on the financial tab
+    # an estimate or bill from the dentist is a dental record
     if s['dental'] >= 2 and s['financial'] >= 2:
         return 'dental', True, s
     ranked = sorted(s.items(), key=lambda kv: -kv[1])
@@ -506,7 +506,7 @@ def classify(text, filename='', known_facilities=(), filed=None):
         names = list(dict.fromkeys(r['analyte'] for r in labs))
         title = 'Lab results: ' + ', '.join(names[:3]) + (f' and {len(names) - 3} more' if len(names) > 3 else '')
     money = None
-    if category == 'financial' or (category == 'dental' and _is_estimate(text)):
+    if False:   # bill amounts are not kept
         amount, amount_sure = find_amount(text)
         money = {'kind': 'Estimate (not billed)' if _is_estimate(text) else 'Bill',
                  'charged': amount, 'sure': amount_sure}

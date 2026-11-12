@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
+from .people import MAIN, People
 from .store import KINDS, Store, ValidationError
 
 STATIC = os.path.join(os.path.dirname(__file__), 'static')
@@ -27,7 +28,7 @@ FILE_TYPES = {'.pdf': 'application/pdf', '.tif': 'image/tiff', '.tiff': 'image/t
 
 # what the ingest machine's scripts call, without an account
 SCRIPT_ROUTES = {('GET', 'summary'), ('GET', 'health'), ('GET', 'files'), ('GET', 'backup'), ('GET', 'uploads'),
-                 ('POST', 'import'), ('POST', 'files')}
+                 ('POST', 'import'), ('POST', 'files'), ('POST', 'upload'), ('GET', 'documents'), ('GET', 'people')}
 # from this same computer only sending records in is allowed: a browser here also comes from
 # 127.0.0.1, and must not read anything without signing in
 LOOPBACK_ROUTES = {('GET', 'health'), ('GET', 'files'), ('POST', 'import'), ('POST', 'files')}
@@ -47,11 +48,14 @@ h1,h2,h3{line-height:1.25;margin:14px 0 6px}a{color:#256c6c}
 
 
 # what a browser-plugin key may do: add files, see how they were filed, check it's connected
-KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health')}
+KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health'), ('GET', 'people')}
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
 
 
-def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None):
+def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None, people=None):
+    people = people or People(store, files_dir, uploads)
+    home = store
+
     class Handler(BaseHTTPRequestHandler):
         server_version = 'healthdash'
 
@@ -154,6 +158,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     return self._err(403, 'requests must come from the dashboard page')
                 if not self._allowed(method, parts):
                     return self._err(401, 'please sign in')
+                self.ctx = people.get(self.headers.get('X-Person') or qs.get('p') or MAIN)
                 return self._dispatch(method, parts, qs)
             except ValidationError as e:
                 return self._err(400, str(e))
@@ -191,24 +196,24 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return r
             if method == 'GET':
                 if p == ['summary']:
-                    return self._send(200, store.summary())
+                    return self._send(200, self.ctx.store.summary())
                 if p == ['timeline']:
-                    return self._send(200, store.timeline(qs.get('financial') == '1'))
+                    return self._send(200, self.ctx.store.timeline())
                 if p == ['search']:
-                    return self._send(200, store.search(qs.get('q', '')))
+                    return self._send(200, self.ctx.store.search(qs.get('q', '')))
                 if p == ['labs', 'series']:
-                    return self._send(200, store.lab_series())
+                    return self._send(200, self.ctx.store.lab_series())
                 if p == ['review']:
-                    return self._send(200, store.review_queue())
+                    return self._send(200, self.ctx.store.review_queue())
                 if p == ['documents']:
-                    return self._send(200, store.documents())
+                    return self._send(200, self.ctx.store.documents())
                 if len(p) == 2 and p[0] == 'documents':
-                    d = store.document(p[1])
+                    d = self.ctx.store.document(p[1])
                     return self._send(200, d) if d else self._err(404, 'no such document')
                 if p == ['backup']:
                     if not self._importer():
                         return self._err(403, 'backups are only allowed from the ingest host')
-                    return self._send(200, store.backup_bytes(), 'application/vnd.sqlite3',
+                    return self._send(200, self.ctx.store.backup_bytes(), 'application/vnd.sqlite3',
                                       {'Content-Disposition': 'attachment; filename="health.db"'})
                 if p == ['health']:
                     from .doctor import upload_status
@@ -216,27 +221,27 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if p == ['uploads']:
                     if not self._importer():
                         return self._err(403, 'only the ingest host can list uploads')
-                    return self._send(200, uploads.uploaded() if uploads else [])
+                    return self._send(200, self.ctx.uploads.uploaded() if self.ctx.uploads else [])
                 if p == ['files', 'missing']:
-                    have = {f.split('.')[0] for f in os.listdir(files_dir)}
-                    return self._send(200, [d['id'] for d in store.documents() if d['id'] not in have])
+                    have = {f.split('.')[0] for f in os.listdir(self.ctx.files_dir)}
+                    return self._send(200, [d['id'] for d in self.ctx.store.documents() if d['id'] not in have])
                 if len(p) == 1 and p[0] in KINDS:
-                    return self._send(200, store.list(p[0]))
+                    return self._send(200, self.ctx.store.list(p[0]))
                 if len(p) == 2 and p[0] in KINDS:
-                    r = store.get(p[0], p[1])
+                    r = self.ctx.store.get(p[0], p[1])
                     return self._send(200, r) if r else self._err(404, 'not found')
             if method == 'POST':
                 if len(p) == 3 and p[0] == 'documents' and p[2] == 'retry':
-                    if not uploads:
+                    if not self.ctx.uploads:
                         return self._err(503, 'uploads are not enabled')
-                    if not uploads.retry(p[1]):
+                    if not self.ctx.uploads.retry(p[1]):
                         return self._err(400, 'nothing to retry for this document')
                     return self._send(202, {'id': p[1], 'status': 'processing'})
                 if p == ['upload']:
                     # from anyone on the LAN using the dashboard; the file is checked, then read
-                    if not uploads:
+                    if not self.ctx.uploads:
                         return self._err(503, 'uploads are not enabled')
-                    return self._send(202, uploads.add(qs.get('name', ''), self._raw_body(),
+                    return self._send(202, self.ctx.uploads.add(qs.get('name', ''), self._raw_body(),
                                                        source=qs.get('source', 'dashboard')))
                 if p == ['import']:
                     if not self._importer():
@@ -247,20 +252,20 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                         return self._err(403, 'uploads are only allowed from the ingest host')
                     return self._upload(p[1], self._raw_body())
                 if len(p) == 1 and p[0] in KINDS:
-                    return self._send(201, store.create(p[0], self._json()))
+                    return self._send(201, self.ctx.store.create(p[0], self._json()))
             if method == 'PUT':
                 if len(p) == 2 and p[0] == 'documents':
-                    d = store.update_document(p[1], self._json())
+                    d = self.ctx.store.update_document(p[1], self._json())
                     return self._send(200, d) if d else self._err(404, 'no such document')
                 if len(p) == 2 and p[0] in KINDS:
-                    r = store.update(p[0], p[1], self._json())
+                    r = self.ctx.store.update(p[0], p[1], self._json())
                     return self._send(200, r) if r else self._err(404, 'not found')
             if method == 'DELETE' and len(p) == 2 and p[0] == 'documents':
-                if not uploads or not uploads.delete(p[1]):
+                if not self.ctx.uploads or not self.ctx.uploads.delete(p[1]):
                     return self._err(400, 'only files added from the dashboard can be deleted here')
                 return self._send(200, {'deleted': True})
             if method == 'DELETE' and len(p) == 2 and p[0] in KINDS:
-                return self._send(200, {'deleted': store.delete(p[0], p[1])})
+                return self._send(200, {'deleted': self.ctx.store.delete(p[0], p[1])})
             return self._err(404, 'not found')
 
         def _accounts(self, method, p):
@@ -274,7 +279,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             ip = self.client_address[0]
             if p == ['setup'] and method == 'POST':
                 body = self._json()
-                with store.lock:
+                with home.lock:
                     if auth.count():
                         return self._err(400, 'an account already exists; sign in')
                     name = auth.add_user(body.get('username'), body.get('password'))
@@ -287,6 +292,14 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if p == ['logout'] and method == 'POST':
                 auth.logout(self._token())
                 return self._send(200, {'signed_out': True}, extra={'Set-Cookie': auth.cookie(None)})
+            if p == ['people'] and method == 'GET':
+                return self._send(200, people.list())
+            if p == ['people'] and method == 'POST' and self._user():
+                return self._send(201, people.add((self._json() or {}).get('name')))
+            if len(p) == 3 and p[0] == 'documents' and p[2] == 'move' and method == 'POST' and self._user():
+                return self._send(200, self._move(p[1], (self._json() or {}).get('to')))
+            if len(p) == 2 and p[0] == 'people' and method == 'PUT' and self._user():
+                return self._send(200, people.rename(p[1], (self._json() or {}).get('name')))
             if p[:1] == ['keys'] and self._user():
                 if p == ['keys'] and method == 'GET':
                     return self._send(200, auth.keys())
@@ -313,42 +326,56 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return self._send(200, {'changed': True})
             return self._err(404, 'not found')
 
+        def _move(self, did, to):
+            src = people.get(self.headers.get('X-Person') or MAIN)
+            dst = people.get(to)
+            if dst is src:
+                raise ValidationError('that is already who it belongs to')
+            doc, records = src.store.take_document(did, dst.id)
+            import shutil
+            for f in os.listdir(src.files_dir):
+                if f.split('.')[0] == did and not f.endswith('.tmp'):
+                    shutil.copy2(os.path.join(src.files_dir, f), os.path.join(dst.files_dir, f))
+                    os.remove(os.path.join(src.files_dir, f))
+            dst.store.give_document(doc, records)
+            return {'moved': did, 'to': dst.id, 'entries': {k: len(v) for k, v in records.items()}}
+
         def _import(self, body):
             result = {}
             if body.get('documents'):
-                result['documents'] = store.upsert_documents(body['documents'])
+                result['documents'] = self.ctx.store.upsert_documents(body['documents'])
             for kind in KINDS:
                 if body.get(kind):
-                    result[kind] = store.upsert_imported(kind, body[kind])
+                    result[kind] = self.ctx.store.upsert_imported(kind, body[kind])
             return result
 
         def _upload(self, name, data):
             sha, _, ext = name.partition('.')
             if not SHA_RE.match(sha) or ('.' + ext.lower()) not in FILE_TYPES:
                 raise ValidationError('file name must be <sha256>.<ext>')
-            if not store.document(sha):
+            if not self.ctx.store.document(sha):
                 raise ValidationError('import the document record first')
             import hashlib
             if hashlib.sha256(data).hexdigest() != sha:
                 raise ValidationError('checksum mismatch')
-            tmp = os.path.join(files_dir, name + '.tmp')
+            tmp = os.path.join(self.ctx.files_dir, name + '.tmp')
             with open(tmp, 'wb') as f:
                 f.write(data)
-            os.replace(tmp, os.path.join(files_dir, sha + '.' + ext.lower()))
-            store.set_has_file(sha)
+            os.replace(tmp, os.path.join(self.ctx.files_dir, sha + '.' + ext.lower()))
+            self.ctx.store.set_has_file(sha)
             return self._send(200, {'stored': name})
 
         def _file(self, sha, download):
             if not SHA_RE.match(sha):
                 return self._err(404, 'not found')
-            match = [f for f in os.listdir(files_dir) if f.split('.')[0] == sha and not f.endswith('.tmp')]
+            match = [f for f in os.listdir(self.ctx.files_dir) if f.split('.')[0] == sha and not f.endswith('.tmp')]
             if not match:
                 return self._err(404, 'file not on the Pi yet')
             fn = match[0]
             ext = os.path.splitext(fn)[1].lower()
-            with open(os.path.join(files_dir, fn), 'rb') as f:
+            with open(os.path.join(self.ctx.files_dir, fn), 'rb') as f:
                 data = f.read()
-            doc = store.document(sha) or {}
+            doc = self.ctx.store.document(sha) or {}
             nice = os.path.basename(doc.get('organized_path') or doc.get('path') or fn)
             nice = re.sub(r'[^\w.\- ]', '_', nice)
             disp = 'attachment' if download else 'inline'
@@ -379,16 +406,26 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
     return Handler
 
 
-def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', require_login=True):
+def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', require_login=True,
+          main_name=None):
     os.makedirs(files_dir, exist_ok=True)
     store = Store(db_path)
     from .auth import Auth
     from .uploads import Uploads
     uploads = Uploads(store, files_dir)
     auth = Auth(store) if require_login else None
-    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth))
+    people = People(store, files_dir, uploads, state_dir=os.path.dirname(os.path.abspath(db_path)),
+                    make_uploads=Uploads, main_name=main_name or _first_name(title))
+    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth, people))
     print(f'healthdash on http://{host}:{port}  db={db_path}  files={files_dir}', flush=True)
     try:
         httpd.serve_forever()
     finally:
+        people.close()
         store.close()
+
+
+def _first_name(title):
+    """'Alex's Health' -> 'Alex'; otherwise the whole title."""
+    m = re.match(r"^(.+?)['’]s\b", title or '')
+    return (m.group(1) if m else (title or 'Main')).strip()[:60]

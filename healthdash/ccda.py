@@ -243,7 +243,7 @@ def parse(data):
                 pe = obs.find(f'.//{N}participant//{N}playingEntity')
                 substance = (ref(pe.find(N + 'code')) or _t(pe.find(N + 'name'))) if pe is not None else ''
                 substance = substance or textref(act)
-                if not substance or re.search(r'no known', substance, re.I):
+                if not substance or NOT_ALLERGY.match(substance.strip()):
                     continue
                 reaction = ''
                 for er in obs.iterfind(N + 'entryRelationship'):
@@ -272,9 +272,11 @@ def parse(data):
             if nar is None:
                 continue
             if 'reason for visit' in low and not out['visit'].get('reason'):
-                out['visit']['reason'] = ('; '.join(_rows(nar)) or _t(nar))[:300] or None
+                txt = ('; '.join(_rows(nar)) or _t(nar))[:300]
+                out['visit']['reason'] = None if not txt or FILLER.search(txt) else txt
             if 'diagnos' in low and not out['visit'].get('diagnoses'):
-                out['visit']['diagnoses'] = ('; '.join(_rows(nar)) or _t(nar))[:500] or None
+                txt = ('; '.join(_rows(nar)) or _t(nar))[:500]
+                out['visit']['diagnoses'] = None if not txt or FILLER.search(txt) else txt
     return out
 
 
@@ -370,10 +372,52 @@ def documents_in(data, name=''):
             if not re.match(r'(?i)^.+\.xml$', base) or base.upper() == 'METADATA.XML' or i.file_size > MAX_XML:
                 continue
             out.append((i.filename, z.read(i)))
-        if not out:
-            raise NotCCDA('no health summary documents (XML) in this zip')
         return out
     return [(name or 'document.xml', data)]
+
+
+def zip_extras(data):
+    """Other things in an export zip: a FHIR bundle (.json), scans (.png/.jpg/.pdf), HTML documents
+    that have no XML twin, and the names of files that are left out."""
+    out = {'json': [], 'scans': [], 'html': [], 'skipped': []}
+    if data[:2] != b'PK':
+        return out
+    z = zipfile.ZipFile(io.BytesIO(data))
+    names = [i for i in z.infolist() if not i.is_dir()]
+    stems = {re.sub(r'(?i)\.(xml|html?|txt|rtf)$', '', i.filename) for i in names if i.filename.lower().endswith('.xml')}
+    for i in names:
+        low = i.filename.lower()
+        stem = re.sub(r'(?i)\.(xml|html?|txt|rtf)$', '', i.filename)
+        if i.file_size > MAX_XML * 2:
+            out['skipped'].append(i.filename)
+        elif low.endswith('.json'):
+            out['json'].append((i.filename, z.read(i)))
+        elif low.endswith(('.png', '.jpg', '.jpeg', '.pdf', '.tif', '.tiff')) and 'patientphoto' not in low:
+            out['scans'].append((i.filename, z.read(i)))
+        elif low.endswith(('.html', '.htm')) and stem not in stems:
+            out['html'].append((i.filename, z.read(i)))
+        elif low.endswith(('.txt', '.rtf', '.html', '.htm')) and stem in stems:
+            continue   # a printable copy of an XML document that is imported
+        elif not low.endswith('.xml'):
+            out['skipped'].append(i.filename)
+    return out
+
+
+FILLER = re.compile(r'no data available for this section|no information|not on file', re.I)
+NOT_ALLERGY = re.compile(r'^(unable|no known|nkda|nka\b|none\b|not on file|unknown)', re.I)
+_FORM_WORDS = set('oral tablet tablets tab tabs capsule capsules caps cap solution injection injectable extended '
+                  'release delayed hcl hydrochloride sodium sulfate mg mcg ml the and per dose pen subcutaneous topical '
+                  'cream patch film coated chewable dispersible enteric er dr sr xl cpcr cpep tbec tb24 tbcr cp24 or po '
+                  'each kit inhaler aerosol hfa unit units iv intravenous premix bag vial syringe suspension drops '
+                  'ophthalmic nasal spray powder packet liquid elixir syrup lozenge gel ointment lotion rectal '
+                  'suppository tromethamine succinate tartrate potassium calcium besylate maleate mesylate'.split())
+
+
+def drug_key(name):
+    """The drug a medication line is about ("EXAMPLOL HCl 2 MG Oral Tablet" -> "examplol")."""
+    n = re.sub(r'\(.*?\)', ' ', (name or '').lower())
+    words = [w for w in re.findall(r'[a-z][a-z-]{2,}', n) if w not in _FORM_WORDS]
+    return words[0] if words else n.strip()[:20]
 
 
 def record_ids(kind, *parts):

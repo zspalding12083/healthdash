@@ -166,7 +166,9 @@ SYNONYMS.update({
     'protein, total, serum': 'Total protein', 'bilirubin, total, serum': 'Bilirubin, total',
     'alkaline phosphatase': 'Alkaline phosphatase', 'ast (sgot)': 'AST', 'alt (sgpt)': 'ALT',
     'egfr': 'eGFR', 'egfr creatinine (ckd-epi 2021)': 'eGFR', 'hemoglobin a1c (hba1c)': 'Hemoglobin A1c',
-    'tsh': 'TSH', 'oxygen saturation in arterial blood by pulse oximetry': 'Oxygen saturation (SpO2)', 'cholesterol, total': 'Cholesterol, total', 'hdl cholesterol': 'HDL', 'ldl-cholesterol': 'LDL',
+    'tsh': 'TSH', 'body weight measured': 'Body weight', 'body mass index (bmi) [ratio]': 'BMI',
+    'systolic blood pressure': 'Systolic blood pressure', 'diastolic blood pressure': 'Diastolic blood pressure',
+    'heart rate sitting': 'Heart rate', 'body surface area derived from formula': 'Body surface area', 'oxygen saturation in arterial blood by pulse oximetry': 'Oxygen saturation (SpO2)', 'cholesterol, total': 'Cholesterol, total', 'hdl cholesterol': 'HDL', 'ldl-cholesterol': 'LDL',
     'triglycerides': 'Triglycerides', 'bun/creatinine ratio': 'BUN/Creat Ratio', 'mean platelet volume': 'MPV', 'triiodothyronine,free': 'Free T3', 'c-reactive protein, quant': 'CRP',
     'thyroid peroxidase (tpo) ab': 'TPO antibodies', 'immunoglobulin a, qn': 'IgA',
 })

@@ -48,27 +48,34 @@ ingest() {
 }
 
 backup() {
-    backup_one "$URL" backups
+    backup_one "$URL" backups main
+    # other people on the same dashboard (the person menu): backups/people/<id>/
+    local pids
+    pids=$(curl -fsS --max-time 20 "$URL/api/people" 2>/dev/null \
+           | python3 -c 'import json,sys; print(" ".join(p["id"] for p in json.load(sys.stdin) if p["id"] != "main"))' 2>/dev/null) || pids=""
+    for pid in $pids; do
+        backup_one "$URL" "backups/people/$pid" "$pid"
+    done
     for entry in $OTHERS; do
         backup_one "http://$HOST:${entry##*:}" "backups/${entry%%:*}"
     done
 }
 
-backup_one() {   # URL DIR
-    local URL=$1 DIR=$2
+backup_one() {   # URL DIR [PERSON]
+    local URL=$1 DIR=$2 P=${3:-main}
     mkdir -p "$DIR" && chmod 700 "$DIR"
     local out; out="$DIR/health-$(date +%Y%m%d-%H%M).db"
-    curl -fsS --max-time 120 -o "$out" "$URL/api/backup"
+    curl -fsS --max-time 120 -o "$out" "$URL/api/backup?p=$P"
     chmod 600 "$out"
     python3 -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('select count(*) from documents')" "$out"
     ls -1t "$DIR"/health-*.db | tail -n +$((KEEP + 1)) | while IFS= read -r old; do rm -- "$old"; done
     echo "backed up to $out ($(du -h "$out" | cut -f1))"
     # files added from the dashboard only exist on the server until copied here
     mkdir -p "$DIR/uploads" && chmod 700 "$DIR/uploads"
-    python3 - "$URL" "$DIR/uploads" <<'EOF'
+    python3 - "$URL" "$DIR/uploads" "$P" <<'EOF'
 import json, os, re, sys, urllib.request
-url, dest = sys.argv[1], sys.argv[2]
-docs = json.load(urllib.request.urlopen(url + '/api/uploads', timeout=60))
+url, dest, person = sys.argv[1], sys.argv[2], sys.argv[3]
+docs = json.load(urllib.request.urlopen(f'{url}/api/uploads?p={person}', timeout=60))
 new = 0
 for d in docs:
     if not d.get('has_file'):
@@ -77,7 +84,7 @@ for d in docs:
     out = os.path.join(dest, f"{d['id'][:12]}_{name}")
     if os.path.exists(out):
         continue
-    data = urllib.request.urlopen(f"{url}/file/{d['id']}?download=1", timeout=300).read()
+    data = urllib.request.urlopen(f"{url}/file/{d['id']}?download=1&p={person}", timeout=300).read()
     with open(out + '.tmp', 'wb') as f:
         f.write(data)
     os.chmod(out + '.tmp', 0o600)

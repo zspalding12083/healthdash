@@ -141,6 +141,7 @@ footer.disc{max-width:1200px;margin:24px auto 40px;padding:0 16px;font-size:12px
 .labchart .tip{position:absolute;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.15);pointer-events:none}
 details.panel summary{cursor:pointer;padding:2px 0}
 details.panel[open] summary{margin-bottom:10px}
+#person{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit;font-weight:600}
 @media (max-width:760px){
   .docview{grid-template-columns:1fr}
   .medrow,.axis{grid-template-columns:110px 1fr}
@@ -153,6 +154,7 @@ details.panel[open] summary{margin-bottom:10px}
 <header>
   <div class="bar">
     <div class="brand">__TITLE__<small id="span"></small></div>
+    <select id="person" hidden title="Whose records"></select>
     <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
     <button class="btn primary" id="upl" title="Add PDFs or photos of records">＋ Add records</button>
     <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.zip,.xml,application/pdf,image/*,application/zip" hidden>
@@ -173,10 +175,10 @@ details.panel[open] summary{margin-bottom:10px}
 const TABS = [
   ['timeline','Timeline'],['meds','Medications'],['visits','Visits'],['tests','Tests & imaging'],
   ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['providers','Doctors'],
-  ['documents','Documents'],['review','Needs review'],['sep',''],['financial','Financial']
+  ['documents','Documents'],['review','Needs review']
 ];
 const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
-  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',providers:'Doctor',financial:'Financial'};
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',providers:'Doctor'};
 const FIELDS = {
   encounters:['date','end_date','type','facility','provider','reason','summary'],
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
@@ -187,7 +189,6 @@ const FIELDS = {
   allergies:['substance','reaction','severity'],
   imaging:['date','modality','description','facility','location','notes'],
   providers:['name','specialty','facility','phone','notes'],
-  financial:['date','kind','payee','account','description','charged','notes','encounter_id'],
 };
 const LONG = new Set(['summary','result','notes','description','reason']);
 const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging']), year:'', fac:''}};
@@ -197,8 +198,12 @@ const money = v => v == null ? '' : (v < 0 ? '−$' : '$') + Math.abs(v).toLocal
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fdate(d){ if(!d) return ''; const [y,m,dd] = d.split('-'); return [dd&&+dd, m&&MON[+m-1], y].filter(Boolean).join(' '); }
 function datePlus(d){ return d ? (d.length===4? d+'-07-01' : d.length===7? d+'-15' : d) : null; }
+// whose records: sent with every request; file links carry it as ?p=
+let PERSON = 'main';
+try{ PERSON = localStorage.getItem('hd-person') || 'main'; }catch(e){}
+function fileUrl(id, extra=''){ return `/file/${id}?p=${encodeURIComponent(PERSON)}${extra}`; }
 async function api(path, opts={}){
-  const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  const r = await fetch(path, {...opts, headers:{'Content-Type':'application/json', 'X-Person': PERSON, ...(opts.headers||{})}});
   const j = await r.json().catch(() => ({}));
   if(r.status === 401){ showLogin(false); throw new Error('please sign in'); }
   if(!r.ok) throw new Error(j.error || r.statusText);
@@ -223,7 +228,7 @@ $('#theme').onclick = () => {
 // ---------- tabs & routing ----------
 function renderTabs(review=0){
   $('#tabs').innerHTML = TABS.map(([id,label]) => id==='sep' ? '<span class="sep"></span>' :
-    `<button data-tab="${id}" class="${S.tab===id?'on':''} ${id==='financial'?'fin':''}">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}</button>`).join('');
+    `<button data-tab="${id}" class="${S.tab===id?'on':''} ">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.tab));
 }
 function go(tab){ S.tab = tab; location.hash = tab; $('#q').value = ''; render(); }
@@ -548,20 +553,6 @@ VIEWS.review = async () => {
   return html + '</div>';
 };
 
-VIEWS.financial = async (sum) => {
-  const fin = await load('financial','/api/financial');
-  const f = sum.financial;
-  const isEst = r => /estimate|quote/i.test(r.kind||'');
-  const bills = fin.filter(r => !isEst(r)), ests = fin.filter(isEst);
-  const byPayee = {};
-  for(const r of bills){ const k = r.payee||'Other'; (byPayee[k] ||= {charged:0,n:0}); byPayee[k].charged += r.charged||0; byPayee[k].n++; }
-  let html = `<div class="tiles"><div class="tile"><b>${money(f.charged)}</b><span>total billed</span></div><div class="tile"><b>${bills.length}</b><span>bills & statements</span></div><div class="tile"><b>${ests.length}</b><span>estimates (not billed)</span></div></div>`;
-  html += `<div class="panel"><h2>By provider</h2><div class="tablewrap"><table><thead><tr><th data-sort>Payee</th><th data-sort>Items</th><th data-sort>Billed</th></tr></thead><tbody>` +
-    Object.entries(byPayee).sort((a,b)=>b[1].charged-a[1].charged).map(([k,v]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${v.n}</td><td class="num" data-v="${v.charged}">${money(v.charged)}</td></tr>`).join('') + '</tbody></table></div></div>';
-  html += recordTable('financial', bills, [['date','Date'],['kind','Kind'],['payee','Payee'],['account','Account','hide-sm'],['description','What for'],['charged','Billed']], 'Bills and statements', {note:'What was billed, from whom, and for what. Whether it was paid is not tracked. Each line opens the original.'});
-  if(ests.length) html += recordTable('financial', ests, [['date','Date'],['kind','Kind'],['payee','Payee'],['description','What was proposed'],['charged','Quoted']], 'Estimates and quotes', {note:'Proposed treatment and its price. Nothing here was billed, and none of it counts in the total above.'});
-  return html;
-};
 
 // ---------- search ----------
 async function renderSearch(q){
@@ -632,11 +623,11 @@ async function openDoc(id){
   const audio = d.has_file && d.ext === '.wav';
   const linked = d.linked.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> ${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</div>`).join('');
   show(`<h2>${esc(d.title)}</h2><div class="muted small">${fdate(d.doc_date)}${d.facility?' · '+esc(d.facility):''} · ${esc(d.category||'')}</div>`,
-    `<div class="docview"><div>${viewable?`<iframe src="/file/${d.id}" title="document" ${d.ext==='.html'?'sandbox=""':''}></iframe>`: audio?`<audio controls src="/file/${d.id}" style="width:100%"></audio>`:''}
+    `<div class="docview"><div>${viewable?`<iframe src="${fileUrl(d.id)}" title="document" ${d.ext==='.html'?'sandbox=""':''}></iframe>`: audio?`<audio controls src="${fileUrl(d.id)}" style="width:100%"></audio>`:''}
       ${d.text?`<h3>${viewable?'Text (searchable)':'Text'}${d.ocr_pages.length?' <span class="tag">read from scan, may contain errors</span>':''}</h3><div class="doctext">${esc(d.text).replace(/\f/g,'\n\n──── next page ────\n\n')}</div>`:''}
       ${!d.has_file?'<p class="muted">The file itself is not on the dashboard (too large, or a disc image). It is in the records folder.</p>':''}</div>
       <div>${d.summary?`<p>${esc(d.summary)}</p>`:''}<div class="kv"><div>File</div><div class="small">${esc(d.organized_path||d.path)}</div><div>Original</div><div class="small">${esc(d.orig_path||'')}</div><div>Pages</div><div>${d.pages??''}</div></div>
-      ${d.has_file?`<p><a class="btn" href="/file/${d.id}?download=1">Download</a> <a class="btn" href="/file/${d.id}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
+      ${d.has_file?`<p><a class="btn" href="${fileUrl(d.id, '&download=1')}">Download</a> <a class="btn" href="${fileUrl(d.id)}" target="_blank" rel="noopener">Open in new tab</a></p>`:''}
       <h3>Entries from this document</h3>${linked||'<p class="muted small">None.</p>'}
       <h3>Details</h3>${d.status==='processing'?'<div class="ask-box">Still reading this file. This can take a minute for scans.</div>':''}
       ${d.duplicate_of&&d.needs_review?`<div class="row-actions" style="justify-content:flex-start;margin:-4px 0 12px"><button class="btn" data-doc="${d.duplicate_of}">Open the one already filed</button></div>`:''}
@@ -647,7 +638,26 @@ async function openDoc(id){
         <label>Kind<select name="category">${['hospital','office','imaging','labs','procedures','tests','eye','dental','medications','financial','legal','other'].map(c=>`<option ${c===d.category?'selected':''}>${c}</option>`).join('')}</select></label>
         <label>From<input name="facility" value="${esc(d.facility||'')}"></label>
         <label>Summary<textarea name="summary" rows="3">${esc(d.summary||'')}</textarea></label></form>
-      <div class="row-actions">${(d.path||'').startsWith('Uploaded/')?'<button class="btn danger" id="ddel">Delete this upload</button>':''}<button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+      <div class="row-actions"><button class="btn" id="dmove" title="This document is someone else's">Move to…</button>${(d.path||'').startsWith('Uploaded/')?'<button class="btn danger" id="ddel">Delete this upload</button>':''}<button class="btn primary" id="dsave">Save${d.needs_review?' and mark reviewed':''}</button></div><p class="muted small" id="dmsg"></p></div></div>`);
+  $('#dmove').onclick = async () => {
+    const others = PEOPLE.filter(p => p.id !== PERSON);
+    show('<h2>Move to another person</h2>', `<p>Moves <b>${esc(d.title)}</b>, its file, and the entries made only from it.
+      Entries that also come from other documents stay here.</p>
+      <form class="edit" id="mf"><label>Move to<select name="to">${others.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+      <option value="__new">Someone new…</option></select></label></form>
+      <div class="row-actions"><button class="btn" id="mcancel">Cancel</button><button class="btn primary" id="mgo">Move</button></div><p class="muted small" id="mmsg"></p>`);
+    $('#mcancel').onclick = () => openDoc(id);
+    $('#mgo').onclick = async () => {
+      let to = new FormData($('#mf')).get('to');
+      try{
+        if(to === '__new'){ const name = prompt('Their name:'); if(!name) return; to = (await api('/api/people', {method:'POST', body:JSON.stringify({name})})).id; await loadPeople(); }
+        const r = await api('/api/documents/' + id + '/move', {method:'POST', body:JSON.stringify({to})});
+        const who = (PEOPLE.find(p => p.id === r.to) || {}).name || r.to;
+        dlg.close(); invalidate(); render();
+        const t = trayItem(d.title); t.status(`Moved to <b>${esc(who)}</b>.`); t.actions(`<button class="btn" data-dismiss>OK</button>`);
+      }catch(e){ $('#mmsg').textContent = e.message; }
+    };
+  };
   if($('#ddel')) $('#ddel').onclick = async () => {
     if(!confirm(`Delete "${d.title}" and anything that was read from it? The original file on your computer is not affected.`)) return;
     try{ await api('/api/documents/' + id, {method:'DELETE'}); $('#dlg').close(); invalidate(); render(); }catch(e){ $('#dmsg').textContent = e.message; }
@@ -721,7 +731,7 @@ async function uploadFiles(files){
   for(const f of files){
     const t = trayItem(f.name);
     try{
-      const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method:'POST', body:f});
+      const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method:'POST', body:f, headers:{'X-Person': PERSON}});
       const j = await r.json().catch(() => ({}));
       if(!r.ok) throw new Error(j.error || r.statusText);
       if(j.duplicate){
@@ -792,8 +802,25 @@ async function openAccounts(){
     <h3>Add someone</h3><form class="edit" id="af"><label>User name<input name="username" autocapitalize="none" required></label>
     <label>Password (8+ characters)<input name="password" type="password" autocomplete="new-password" required minlength="8"></label></form>
     <div class="row-actions"><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>
+    <h3>People</h3><div class="muted small">Each person's records are kept apart. Switch between them with the menu at the top.</div>
+    <div class="acct-list" id="peoplelist"></div>
+    <form class="edit" id="pf" onsubmit="return false"><label>Add a person<input name="name" placeholder="Name" autocomplete="off"></label></form>
+    <div class="row-actions" style="justify-content:flex-start"><button class="btn" id="addperson">Add person</button></div>
     <h3>Browser plugin keys</h3><div class="muted small">A key lets the Firefox plugin add files you view on patient portals. It can only add files, not read or change records. Shown once; paste it into the plugin's settings.</div>
     <div class="acct-list" id="keylist"></div><div class="row-actions" style="justify-content:flex-start"><button class="btn" id="newkey">Create a key</button></div><div id="keyshow"></div>`);
+  $('#peoplelist').innerHTML = PEOPLE.map(p => `<div><span><b>${esc(p.name)}</b>${p.id===PERSON?' <span class="tag">showing</span>':''}</span>
+    <span><button class="btn" data-show="${esc(p.id)}">Show</button> <button class="btn" data-rename="${esc(p.id)}">Rename</button></span></div>`).join('');
+  $('#peoplelist').querySelectorAll('[data-show]').forEach(b => b.onclick = () => { switchPerson(b.dataset.show); dlg.close(); });
+  $('#peoplelist').querySelectorAll('[data-rename]').forEach(b => b.onclick = async () => {
+    const p = PEOPLE.find(x => x.id === b.dataset.rename); const name = prompt('Name:', p.name); if(!name) return;
+    try{ await api('/api/people/' + encodeURIComponent(p.id), {method:'PUT', body:JSON.stringify({name})}); await loadPeople(); openAccounts(); }
+    catch(e){ $('#amsg').textContent = e.message; }
+  });
+  $('#addperson').onclick = async () => {
+    const name = new FormData($('#pf')).get('name');
+    try{ const p = await api('/api/people', {method:'POST', body:JSON.stringify({name})}); await loadPeople(); switchPerson(p.id); dlg.close(); }
+    catch(e){ $('#amsg').textContent = e.message; }
+  };
   const keys = await api('/api/keys');
   $('#keylist').innerHTML = keys.length ? keys.map(k => `<div><span><b>${esc(k.label)}</b> <span class="muted small">${esc(k.username)} · made ${esc((k.created||'').slice(0,10))} · last used ${esc((k.last_used||'never').slice(0,10))}</span></span><button class="btn danger" data-revoke="${esc(k.id)}">Revoke</button></div>`).join('') : '<span class="muted small">No keys yet.</span>';
   $('#keylist').querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => { if(!confirm('Revoke this key? The plugin using it stops working.')) return; await api('/api/keys/' + b.dataset.revoke, {method:'DELETE'}); openAccounts(); });
@@ -820,6 +847,32 @@ async function openAccounts(){
 }
 $('#acct').onclick = () => openAccounts();
 
+let PEOPLE = [];
+async function loadPeople(){
+  try{ PEOPLE = await api('/api/people'); }catch(e){ PEOPLE = []; }
+  if(!PEOPLE.some(p => p.id === PERSON)){ PERSON = 'main'; }
+  const sel = $('#person');
+  sel.innerHTML = PEOPLE.map(p => `<option value="${esc(p.id)}" ${p.id===PERSON?'selected':''}>${esc(p.name)}</option>`).join('');
+  sel.hidden = PEOPLE.length < 2;
+  showTitle();
+}
+// with more than one person the title follows whoever is shown
+const BASE_TITLE = document.title;
+function showTitle(){
+  const p = PEOPLE.find(x => x.id === PERSON);
+  const t = PEOPLE.length > 1 && p ? `${p.name}'s Health` : BASE_TITLE;
+  document.title = t;
+  const b = document.querySelector('.brand'); if(b && b.firstChild) b.firstChild.nodeValue = t;
+}
+function switchPerson(id){
+  PERSON = id;
+  try{ localStorage.setItem('hd-person', id); }catch(e){}
+  $('#person').value = id;
+  showTitle();
+  invalidate(); render();
+}
+$('#person').onchange = e => switchPerson(e.target.value);
+
 async function boot(){
   let a = {auth:false};
   try{ a = await fetch('/api/auth').then(r => r.json()); }catch(e){}
@@ -827,6 +880,7 @@ async function boot(){
   if(a.auth && !a.user) return showLogin(false);
   ME = a.user;
   if(a.auth){ $('#acct').hidden = false; $('#acct').textContent = '👤 ' + a.user; }
+  await loadPeople();
   const start = location.hash.slice(1);
   if(TABS.some(t => t[0]===start)) S.tab = start;
   checkHealth();

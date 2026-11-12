@@ -29,26 +29,16 @@ KINDS = {
     'allergies': ['substance', 'reaction', 'severity'],
     'imaging': ['date', 'modality', 'description', 'facility', 'location', 'notes'],
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
-    # what was billed or quoted, not whether it was paid (payment status is deliberately not kept)
-    'financial': ['date', 'kind', 'payee', 'account', 'description', 'charged', 'notes', 'encounter_id'],
 }
-NUMERIC = {'num', 'charged'}
-DROPPED = {'financial': ['paid', 'adjusted', 'owed']}  # removed columns, erased on open
+NUMERIC = {'num'}
+DROPPED = {}  # removed columns, erased on open
+DROPPED_TABLES = ['financial']  # bills and estimates are no longer kept
 INTEGER = {'abnormal'}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
                        'person_edited INTEGER DEFAULT 0']}  # columns added after the first release
-# A financial row whose kind mentions an estimate or quote is not a charge: no work was billed.
-ESTIMATE_SQL = "(lower(coalesce(kind,'')) LIKE '%estimate%' OR lower(coalesce(kind,'')) LIKE '%quote%')"
-
-
-def is_estimate(kind):
-    k = (kind or '').lower()
-    return 'estimate' in k or 'quote' in k
-
-
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
 
 
@@ -171,6 +161,14 @@ class Store:
                     self.db.execute(f'ALTER TABLE {table} ADD COLUMN {c}')
         self.db.commit()
         dropped = False
+        for table in DROPPED_TABLES:
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                self.db.execute(f'DROP TABLE {table}')
+                dropped = True
+        if dropped:
+            self.db.commit()
+            self.db.execute('VACUUM')  # so the old values are really gone from the file
+            dropped = False
         if sqlite3.sqlite_version_info < (3, 35):  # too old to drop columns; they're just ignored
             return
         for table, cols in DROPPED.items():
@@ -276,7 +274,10 @@ class Store:
         return n > 0
 
     def upsert_imported(self, kind, items):
-        """Import records with stable ids; skips rows edited on the dashboard."""
+        """Import records with stable ids; skips rows edited on the dashboard and rows moved to
+        another person."""
+        moved = self.moved_ids(kind)
+        items = [i for i in items if str(i.get('id')) not in moved]
         added = updated = skipped = 0
         with self.lock:
             for item in items:
@@ -303,6 +304,8 @@ class Store:
     # ---- documents ----------------------------------------------------------------------
 
     def upsert_documents(self, docs):
+        moved = self.moved_ids('documents')
+        docs = [d for d in docs if str(d.get('id')) not in moved]
         added = updated = 0
         with self.lock:
             for d in docs:
@@ -394,12 +397,6 @@ class Store:
                                 (row['date'], row['analyte'], row.get('value')))
         return q.fetchone() is not None
 
-    def bill_exists(self, date, charged):
-        if charged is None:
-            return False
-        return self.db.execute('SELECT 1 FROM financial WHERE date IS ? AND charged=? LIMIT 1',
-                               (date, float(charged))).fetchone() is not None
-
     def plugin_pages(self, except_id):
         """Saved portal pages nobody has saved by hand: (id, text)."""
         return [(r[0], r[1]) for r in self.db.execute(
@@ -436,11 +433,122 @@ class Store:
                 continue
         return out
 
+    def consolidate_meds(self, drug_key, record_id, gap_days=60):
+        """Imported medication lines (not edited by a person) merged into one entry per drug per
+        period of use: lines of the same drug less than gap_days apart become one entry."""
+        from datetime import date as D, timedelta
+        rows = [r for r in self.list('medications') if (r['id'] or '').startswith('ccda-') and not r.get('edited')]
+        groups = {}
+        for r in rows:
+            groups.setdefault(drug_key(r['name']), []).append(r)
+
+        def d(v):
+            try:
+                return D.fromisoformat((v or '')[:10]) if len(v or '') >= 10 else (
+                    D.fromisoformat(v + '-01') if len(v or '') == 7 else D.fromisoformat(v + '-01-01') if len(v or '') == 4 else None)
+            except ValueError:
+                return None
+        merged = []
+        for key, items in groups.items():
+            items.sort(key=lambda r: (d(r['start_date']) or D.max, r['updated'] or ''))
+            episodes = []
+            for r in items:
+                s, e = d(r['start_date']), d(r['end_date']) or d(r['start_date'])
+                if episodes and (s is None or episodes[-1]['end'] is None or s <= episodes[-1]['end'] + timedelta(days=gap_days)):
+                    ep = episodes[-1]
+                    ep['rows'].append(r)
+                    if e and (ep['end'] is None or e > ep['end']):
+                        ep['end'] = e
+                else:
+                    episodes.append({'start': s, 'end': e, 'rows': [r]})
+            for ep in episodes:
+                last = max(ep['rows'], key=lambda r: (d(r['start_date']) or D.min, r['updated'] or ''))
+                active = last['status'] == 'active' and not last['end_date']
+                docs = []
+                for r in ep['rows']:
+                    docs += [x for x in r['docs'] if x not in docs]
+                starts = [r['start_date'] for r in ep['rows'] if r['start_date']]
+                first = min(starts) if starts else None
+                ends = [r['end_date'] for r in ep['rows'] if r['end_date']]
+                n = len(ep['rows'])
+                merged.append({'id': record_id('med', key, first), 'docs': docs[:40], 'name': last['name'],
+                               'dose': last['dose'], 'schedule': last['schedule'], 'purpose': last['purpose'],
+                               'start_date': first, 'end_date': None if active else (max(ends) if ends else last['start_date']),
+                               'status': 'active' if active else 'stopped', 'prescriber': last['prescriber'],
+                               'notes': (f'Listed {n} times in the records' + (f' ({first} to {max(ends + starts)})' if starts else '') + '. '
+                                         if n > 1 else '') + (last['notes'] or '')})
+        keep = {m['id'] for m in merged}
+        with self.lock:
+            for r in rows:
+                if r['id'] not in keep:
+                    self.db.execute('DELETE FROM medications WHERE id=?', (r['id'],))
+            self.db.commit()
+        self.upsert_imported('medications', merged)
+        return {'lines': len(rows), 'entries': len(merged)}
+
+    def _moved_table(self):
+        self.db.executescript('CREATE TABLE IF NOT EXISTS moved (kind TEXT, id TEXT, to_person TEXT, at TEXT, '
+                              'PRIMARY KEY (kind, id));')
+
+    def moved_ids(self, kind):
+        self._moved_table()
+        return {r[0] for r in self.db.execute('SELECT id FROM moved WHERE kind=?', (kind,))}
+
+    def take_document(self, did, to_person):
+        """Remove a document and the entries made only from it, for moving to someone else.
+        Returns (document row, {kind: [records]}). Entries that also cite other documents stay,
+        without this one. The ids are remembered so a later import doesn't put them back."""
+        self._moved_table()
+        doc = self.db.execute('SELECT * FROM documents WHERE id=?', (did,)).fetchone()
+        if not doc:
+            raise ValidationError('no such document')
+        doc = dict(doc)
+        taken = {}
+        with self.lock:
+            for kind in KINDS:
+                for r in self.list(kind):
+                    if did not in r['docs']:
+                        continue
+                    if r['docs'] == [did]:
+                        taken.setdefault(kind, []).append(r)
+                        self.db.execute(f'DELETE FROM {kind} WHERE id=?', (r['id'],))
+                        self.db.execute('INSERT OR REPLACE INTO moved VALUES (?, ?, ?, ?)', (kind, r['id'], to_person, now()))
+                    else:
+                        self.db.execute(f'UPDATE {kind} SET docs=? WHERE id=?',
+                                        (json.dumps([x for x in r['docs'] if x != did]), r['id']))
+            self.db.execute('DELETE FROM documents WHERE id=?', (did,))
+            self.db.execute('INSERT OR REPLACE INTO moved VALUES (?, ?, ?, ?)', ('documents', did, to_person, now()))
+            self.db.commit()
+        return doc, taken
+
+    def give_document(self, doc, records):
+        """Add a document and its entries moved from someone else (kept as a person's edits)."""
+        self._moved_table()
+        with self.lock:   # if it had been moved away from here before, it's back now
+            self.db.execute("DELETE FROM moved WHERE kind='documents' AND id=?", (doc['id'],))
+            for kind, rows in records.items():
+                for r in rows:
+                    self.db.execute('DELETE FROM moved WHERE kind=? AND id=?', (kind, r['id']))
+            self.db.commit()
+        cols = [c for c in doc if c != 'rowid']
+        with self.lock:
+            self.db.execute(f'INSERT OR REPLACE INTO documents ({", ".join(cols)}) VALUES ({", ".join("?" * len(cols))})',
+                            [doc[c] for c in cols])
+            self.db.execute('UPDATE documents SET edited=1, person_edited=1 WHERE id=?', (doc['id'],))
+            self.db.commit()
+        for kind, rows in records.items():
+            for r in rows:
+                rec = {f: r.get(f) for f in KINDS[kind]}
+                rec.update(id=r['id'], docs=r['docs'], needs_review=r.get('needs_review', 0))
+                self.upsert_imported(kind, [rec])
+                with self.lock:
+                    self.db.execute(f'UPDATE {kind} SET edited=1, origin=? WHERE id=?', ('moved', r['id']))
+                    self.db.commit()
+
     def clear_upload_entries(self, did):
         """Entries read from an upload (not edited by a person), before reading it again."""
         with self.lock:
             self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
-            self.db.execute("DELETE FROM financial WHERE id=? AND edited=0", (f'fin-u{did[:10]}',))
             self.db.commit()
 
     def delete_upload(self, did):
@@ -451,7 +559,6 @@ class Store:
         with self.lock:
             self.db.execute('DELETE FROM documents WHERE id=?', (did,))
             self.db.execute("DELETE FROM labs WHERE id LIKE ? AND edited=0", (f'lab-u{did[:10]}-%',))
-            self.db.execute("DELETE FROM financial WHERE id=? AND edited=0", (f'fin-u{did[:10]}',))
             self.db.commit()
         return d
 
@@ -516,7 +623,7 @@ class Store:
                 recs.append(r)
         return {'documents': docs, 'records': recs}
 
-    def timeline(self, include_financial=False):
+    def timeline(self):
         """Everything with a date, newest first, as uniform events."""
         ev = []
 
@@ -545,10 +652,6 @@ class Store:
                 {'change': 'start'}, r['docs'])
             add('medications', r['id'], r['end_date'], f'Stopped {label}', r['notes'], None,
                 {'change': 'stop'}, r['docs'])
-        if include_financial:
-            for r in self.list('financial'):
-                add('financial', r['id'], r['date'], f"{r['kind'] or 'Bill'}: {r['payee'] or ''}",
-                    r['description'], r['payee'], {'charged': r['charged']}, r['docs'])
         ev.sort(key=lambda e: (e['date'], e['kind']), reverse=True)
         return ev
 
@@ -570,14 +673,10 @@ class Store:
                              "(end_date IS NULL AND status IS NULL)) ORDER BY name")
         last = self._rows('SELECT * FROM encounters ORDER BY date DESC LIMIT 1')
         span = self.db.execute("SELECT MIN(date), MAX(date) FROM encounters").fetchone()
-        fin = self.db.execute(f'SELECT COUNT(*), SUM(charged) FROM financial WHERE NOT {ESTIMATE_SQL}').fetchone()
-        est = self.db.execute(f'SELECT COUNT(*), SUM(charged) FROM financial WHERE {ESTIMATE_SQL}').fetchone()
         return {'counts': c, 'needs_review': review,
                 'current_meds': [self._decode(r) for r in current],
                 'last_visit': self._decode(last[0]) if last else None,
-                'first_date': span[0], 'last_date': span[1],
-                'financial': {'bills': fin[0] or 0, 'charged': fin[1] or 0,
-                              'estimates': est[0] or 0, 'estimated': est[1] or 0}}
+                'first_date': span[0], 'last_date': span[1]}
 
     def review_queue(self):
         docs = self._rows('SELECT id, title, doc_date, category, path, status, review_note FROM documents '

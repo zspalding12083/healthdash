@@ -96,6 +96,29 @@ class CcdaTests(unittest.TestCase):
             self.assertNotEqual(page[0]['id'], sha)    # the uploaded file keeps its own entry
             store.close()
 
+    def test_medication_lines_merge_into_periods(self):
+        from healthdash import ccda as C
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            rows = [
+                {"id": "ccda-med-a", "name": "Examplol 10 MG Oral Tablet", "start_date": "2020-01-01", "end_date": "2020-03-01", "status": "stopped"},
+                {"id": "ccda-med-b", "name": "EXAMPLOL HCL - 20 MG Oral Tab", "start_date": "2020-03-20", "status": "active"},
+                {"id": "ccda-med-c", "name": "Examplol 10 MG Oral Tablet", "start_date": "2023-05-01", "end_date": "2023-06-01", "status": "stopped"},
+                {"id": "ccda-med-d", "name": "Fakeazole 500 MG", "start_date": "2021-01-01", "end_date": "2021-01-08", "status": "stopped"},
+                {"id": "hand-picked", "name": "Examplol", "start_date": "2010-01-01", "status": "active"},
+            ]
+            store.upsert_imported("medications", rows)
+            r = store.consolidate_meds(C.drug_key, C.record_ids)
+            self.assertEqual(r, {"lines": 4, "entries": 3})
+            meds = {(m["name"], m["start_date"]): m for m in store.list("medications")}
+            cur = meds[("EXAMPLOL HCL - 20 MG Oral Tab", "2020-01-01")]       # 2020 lines are one period
+            self.assertEqual((cur["status"], cur["end_date"]), ("active", None))
+            self.assertIn("Listed 2 times", cur["notes"])
+            self.assertEqual(meds[("Examplol 10 MG Oral Tablet", "2023-05-01")]["end_date"], "2023-06-01")
+            self.assertIn(("Examplol", "2010-01-01"), meds)                    # a hand-entered one is left alone
+            self.assertEqual(store.consolidate_meds(C.drug_key, C.record_ids), {"lines": 3, "entries": 3})  # stable
+            store.close()
+
     def test_refuses_entities(self):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')

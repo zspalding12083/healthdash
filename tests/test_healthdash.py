@@ -26,8 +26,6 @@ SAMPLE = {
         {'id': 'med-1', 'name': 'Examplol', 'dose': '10 mg', 'start_date': '2019-01', 'status': 'active'},
         {'id': 'med-2', 'name': 'Fakeazole', 'dose': '20 mg', 'start_date': '2018-05-01',
          'end_date': '2020-03-05', 'status': 'stopped', 'notes': 'Switched'}],
-    'financial': [{'id': 'fin-1', 'date': '2020-04-01', 'kind': 'Statement', 'payee': 'Sample Ortho',
-                   'charged': '$1,000.50'}],
 }
 
 
@@ -52,22 +50,14 @@ class StoreTests(unittest.TestCase):
         tl = self.s.timeline()
         kinds = [e['kind'] for e in tl]
         self.assertIn('encounters', kinds)
-        self.assertNotIn('financial', kinds)
         stops = [e for e in tl if e.get('change') == 'stop']
         self.assertEqual(stops[0]['title'], 'Stopped Fakeazole 20 mg')
-        self.assertIn('financial', [e['kind'] for e in self.s.timeline(include_financial=True)])
 
-    def test_money_parsing_and_summary(self):
+    def test_summary(self):
         self.load()
-        self.assertEqual(self.s.get('financial', 'fin-1')['charged'], 1000.5)
         summ = self.s.summary()
         self.assertEqual([m['name'] for m in summ['current_meds']], ['Examplol'])
-        self.assertEqual(summ['financial']['charged'], 1000.5)
-        self.s.create('financial', {'kind': 'Quote (estimate)', 'charged': 5000, 'paid': 1})
-        summ = self.s.summary()
-        self.assertEqual(summ['financial']['charged'], 1000.5)  # estimates are not charges
-        self.assertNotIn('paid', self.s.list('financial')[0])  # payment status is not kept
-        self.assertEqual((summ['financial']['estimates'], summ['financial']['estimated']), (1, 5000))
+        self.assertNotIn('financial', summ)
 
     def test_search_documents_and_records(self):
         self.load()
@@ -102,7 +92,7 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.s.create('nope', {})
         with self.assertRaises(ValidationError):
-            self.s.create('financial', {'charged': 'lots'})
+            self.s.create('financial', {'charged': 1})   # bills are not kept any more
         r = self.s.create('conditions', {'name': 'Migraine', 'status': 'active', 'first_noted': '2015'})
         self.assertEqual(r['origin'], 'manual')
 
@@ -113,22 +103,17 @@ class StoreTests(unittest.TestCase):
         self.assertEqual([m['name'] for m in summ['current_meds']], ['Examplol'])
         self.assertTrue(self.s.search('appendicitis')['documents'])
 
-    def test_old_payment_columns_are_erased(self):
+    def test_old_bill_entries_are_erased(self):
         import sqlite3
         self.s.close()
         path = os.path.join(self.tmp.name, 'old.db')
         db = sqlite3.connect(path)
-        db.execute("CREATE TABLE financial (id TEXT PRIMARY KEY, date TEXT, kind TEXT, payee TEXT, account TEXT, "
-                   "description TEXT, charged REAL, paid REAL, adjusted REAL, owed REAL, notes TEXT, "
-                   "encounter_id TEXT, docs TEXT DEFAULT '[]', needs_review INTEGER DEFAULT 0, "
-                   "edited INTEGER DEFAULT 0, origin TEXT DEFAULT 'manual', updated TEXT)")
-        db.execute("INSERT INTO financial (id, charged, paid, owed) VALUES ('f', 10, 7, 3)")
+        db.execute("CREATE TABLE financial (id TEXT PRIMARY KEY, date TEXT, charged REAL)")
+        db.execute("INSERT INTO financial VALUES ('f', '2020-01-01', 10)")
         db.commit()
         db.close()
         self.s = Store(path)
-        cols = {r[1] for r in self.s.db.execute('PRAGMA table_info(financial)')}
-        self.assertFalse(cols & {'paid', 'adjusted', 'owed'})
-        self.assertEqual(self.s.get('financial', 'f')['charged'], 10)
+        self.assertIsNone(self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='financial'").fetchone())
 
     def test_lab_series(self):
         self.load()

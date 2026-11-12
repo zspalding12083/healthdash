@@ -30,13 +30,13 @@
 
   <section>
     <h2>Your dashboards</h2>
-    <p class="muted">One per person. The popup's <b>Save to</b> picks which one gets what you save. Keys come from
-      each dashboard: 👤 → Accounts → Browser plugin keys → Create a key.</p>
+    <p class="muted">Usually just one. The popup's <b>Save to</b> lists the people on each dashboard and picks whose
+      records get what you save. Keys come from the dashboard: 👤 → Accounts → Browser plugin keys → Create a key.</p>
     <div id="dashes"></div>
     <button id="adddash">Add a dashboard</button>
   </section>
   <template id="dashrow"><div class="dash">
-    <label>Name (whose records)</label><input class="label" placeholder="Alex" autocomplete="off">
+    <label>Name for this dashboard</label><input class="label" placeholder="Family" autocomplete="off">
     <label>Dashboard address</label><input class="url" placeholder="http://192.168.1.50:9380" autocomplete="off">
     <label>Plugin key</label><input class="key" type="password" placeholder="hdk_…" autocomplete="off">
     <button class="test">Test connection</button> <button class="remove">Remove</button> <span class="testmsg muted"></span>

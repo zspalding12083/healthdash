@@ -95,8 +95,7 @@ class ClassifyTests(unittest.TestCase):
         r = classify.classify(DENTAL_QUOTE, 'quote.pdf', KNOWN)
         self.assertEqual(r['category'], 'dental')
         self.assertEqual(r['facility'], 'Maple Street Dental')
-        self.assertEqual(r['money']['kind'], 'Estimate (not billed)')
-        self.assertEqual(r['money']['charged'], 1370.0)
+        self.assertIsNone(r['money'])                    # amounts are not kept
 
     def test_unclear_document_asks(self):
         r = classify.classify(VAGUE, 'letter.pdf', KNOWN)
@@ -199,12 +198,10 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(len([x for x in d['linked'] if x['kind'] == 'labs']), 4)
         self.assertTrue(self.upload('labs.pdf', b'%PDF-1 lab')['duplicate'])
 
-    def test_estimate_goes_to_financial_as_estimate(self):
+    def test_estimate_is_a_document_only(self):
         d = self.wait(self.upload('quote.pdf', b'%PDF-1 quote')['id'])
-        self.assertIn('financial', [x['kind'] for x in d['linked']])
-        fin = self.store.get('financial', 'fin-u' + d['id'][:10])
-        self.assertEqual((fin['kind'], fin['charged']), ('Estimate (not billed)', 1370.0))
-        self.assertEqual(self.store.summary()['financial']['charged'], 0)  # not counted as billed
+        self.assertEqual(d['category'], 'dental')
+        self.assertEqual(d['linked'], [])
 
     def test_unclear_upload_asks_and_saving_clears_it(self):
         d = self.wait(self.upload('letter.pdf', b'%PDF-1 vague')['id'])

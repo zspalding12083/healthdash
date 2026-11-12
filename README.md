@@ -1,8 +1,7 @@
 # healthdash
 
 A private, self-hosted dashboard for one person's medical history: visits, tests, lab results,
-procedures, and when each medication was started and stopped, with bills and statements kept on a
-separate tab. Every line links back to the original PDF or scan it came from, and the full text of
+procedures, and when each medication was started and stopped. Every line links back to the original PDF or scan it came from, and the full text of
 every document is searchable.
 
 Built for a family member whose records were a folder of hospital printouts, portal exports,
@@ -31,12 +30,10 @@ Mac on the home network.
 - **Documents**: every source file with date, kind and facility; opens the original. OCR'd text is
   searchable (SQLite FTS5).
 - **Add records**: drop PDFs or phone photos onto the page. Each one is read (OCR for scans),
-  sorted by kind, date and facility, its lab values and bill amount are pulled out, and it is
+  sorted by kind, date and facility, its lab values are pulled out, and it is
   filed. Anything it isn't sure about is put to you as a question, with its best guess filled in.
   Copies of documents already filed are caught and lab values are never added twice.
 - **Needs review**: uploads with open questions, new files the catalog doesn't know yet.
-- **Financial**: what was billed or quoted, by whom and for what, apart from the health tabs.
-  Quotes are kept apart from bills.
 
 Everything runs on your own machine. Nothing is sent to any outside service, API or cloud.
 
@@ -57,9 +54,10 @@ Everything runs on your own machine. Nothing is sent to any outside service, API
   encryption, a user account others can't use).
 - **It is not a backup.** `deploy/sync.sh backup` copies the database and uploaded files to another
   machine, but keeping your original documents safe is up to you.
-- **It does not track payments.** Bills record what was charged, not whether it was paid.
 - **It is not built for clinics or businesses** and makes no claim of HIPAA or any other
   compliance. It is meant for a person or a family keeping their own records.
+- **It does not keep bills or costs.** Bills and statements are kept as documents only; amounts,
+  payments and estimates are not tracked.
 - **It does not fetch records** from patient portals, insurers or pharmacies. You download them
   and add them.
 - **It does not read imaging** (the CT/MRI pictures themselves). It lists the studies on a disc;

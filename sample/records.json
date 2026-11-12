@@ -1,79 +1,337 @@
 {
-  "_note": "Made-up demo data for a fictional patient. Not a real person, not real records.",
-  "encounters": [
-    {"id": "enc-2019-06-18-er", "docs": ["doc-er-2019"], "date": "2019-06-18", "type": "ER / urgent",
-     "facility": "Riverside General Hospital", "provider": "Dr. Robin Example (ER)",
-     "reason": "Rolled ankle playing basketball",
-     "summary": "X-ray showed a hairline fracture of the distal fibula. Splinted, crutches, follow up with orthopedics."},
-    {"id": "enc-2019-06-25-ortho", "docs": ["doc-ortho-2019"], "date": "2019-06-25", "type": "Office",
-     "facility": "Maple Street Orthopedics", "provider": "Dr. Casey Placeholder",
-     "reason": "Ankle fracture follow-up", "summary": "Walking boot for 6 weeks, then physical therapy."},
-    {"id": "enc-2021-04-09-admit", "docs": ["doc-admit-2021", "doc-labs-2021"], "date": "2021-04-09",
-     "end_date": "2021-04-11", "type": "Inpatient", "facility": "Riverside General Hospital",
-     "provider": "Dr. Morgan Demo (hospitalist)", "reason": "Appendicitis",
-     "summary": "CT confirmed acute appendicitis. Laparoscopic appendectomy on 4/9; home on day 2."},
-    {"id": "enc-2023-05-02-annual", "docs": ["doc-annual-2023"], "date": "2023-05-02", "type": "Office",
-     "facility": "Maple Street Family Practice", "provider": "Dr. Sam Testwell",
-     "reason": "Annual physical", "summary": "A1c borderline; started Examplol for blood pressure."}
-  ],
-  "tests": [
-    {"id": "test-2019-06-18-xray", "docs": ["doc-er-2019"], "date": "2019-06-18", "category": "imaging",
-     "name": "X-ray right ankle", "body_part": "Ankle", "facility": "Riverside General Hospital",
-     "result": "Nondisplaced hairline fracture of the distal fibula.", "abnormal": 1,
-     "encounter_id": "enc-2019-06-18-er"},
-    {"id": "test-2021-04-09-ct", "docs": ["doc-admit-2021"], "date": "2021-04-09", "category": "imaging",
-     "name": "CT abdomen and pelvis with contrast", "body_part": "Abdomen", "facility": "Riverside General Hospital",
-     "result": "Dilated appendix with surrounding inflammation, no abscess.", "abnormal": 1,
-     "encounter_id": "enc-2021-04-09-admit"},
-    {"id": "test-2023-05-02-ecg", "docs": ["doc-annual-2023"], "date": "2023-05-02", "category": "cardiac",
-     "name": "ECG", "facility": "Maple Street Family Practice", "result": "Normal sinus rhythm.", "abnormal": 0,
-     "encounter_id": "enc-2023-05-02-annual"}
-  ],
-  "labs": [
-    {"id": "lab-1", "docs": ["doc-labs-2021"], "date": "2021-04-09", "panel": "CBC", "analyte": "WBC", "value": "14.2 K/uL", "num": 14.2, "unit": "K/uL", "ref_range": "4.5-11.0", "flag": "H", "facility": "Riverside General Hospital"},
-    {"id": "lab-2", "docs": ["doc-labs-2021"], "date": "2021-04-10", "panel": "CBC", "analyte": "WBC", "value": "11.6 K/uL", "num": 11.6, "unit": "K/uL", "ref_range": "4.5-11.0", "flag": "H", "facility": "Riverside General Hospital"},
-    {"id": "lab-3", "docs": ["doc-labs-2021"], "date": "2021-04-11", "panel": "CBC", "analyte": "WBC", "value": "8.9 K/uL", "num": 8.9, "unit": "K/uL", "ref_range": "4.5-11.0", "facility": "Riverside General Hospital"},
-    {"id": "lab-4", "docs": ["doc-labs-2021"], "date": "2021-04-09", "panel": "BMP", "analyte": "Glucose", "value": "112 mg/dL", "num": 112, "unit": "mg/dL", "ref_range": "74-106", "flag": "H", "facility": "Riverside General Hospital"},
-    {"id": "lab-5", "docs": ["doc-annual-2023"], "date": "2022-05-03", "analyte": "Hemoglobin A1c", "value": "5.6 %", "num": 5.6, "unit": "%", "ref_range": "4.0-5.6", "facility": "Maple Street Family Practice"},
-    {"id": "lab-6", "docs": ["doc-annual-2023"], "date": "2023-05-02", "analyte": "Hemoglobin A1c", "value": "6.0 %", "num": 6.0, "unit": "%", "ref_range": "4.0-5.6", "flag": "H", "facility": "Maple Street Family Practice"},
-    {"id": "lab-7", "docs": ["doc-annual-2023"], "date": "2023-05-02", "analyte": "Glucose", "value": "101 mg/dL", "num": 101, "unit": "mg/dL", "ref_range": "74-106", "facility": "Maple Street Family Practice"},
-    {"id": "lab-8", "docs": ["doc-annual-2023"], "date": "2024-05-07", "analyte": "Hemoglobin A1c", "value": "5.7 %", "num": 5.7, "unit": "%", "ref_range": "4.0-5.6", "flag": "H", "facility": "Maple Street Family Practice"}
-  ],
-  "procedures": [
-    {"id": "proc-2021-04-09-appy", "docs": ["doc-admit-2021"], "date": "2021-04-09", "name": "Laparoscopic appendectomy",
-     "facility": "Riverside General Hospital", "provider": "Dr. Alex Sampleton (surgery)", "notes": "Uncomplicated.",
-     "encounter_id": "enc-2021-04-09-admit"}
-  ],
-  "medications": [
-    {"id": "med-examplol-1", "docs": ["doc-annual-2023"], "name": "Examplol", "dose": "10 mg", "schedule": "every morning",
-     "purpose": "Blood pressure", "start_date": "2023-05-02", "end_date": "2024-05-07", "status": "stopped",
-     "prescriber": "Dr. Sam Testwell", "notes": "Dose raised at the 2024 physical."},
-    {"id": "med-examplol-2", "docs": ["doc-annual-2023"], "name": "Examplol", "dose": "20 mg", "schedule": "every morning",
-     "purpose": "Blood pressure", "start_date": "2024-05-07", "status": "active", "prescriber": "Dr. Sam Testwell"},
-    {"id": "med-fakeazole", "docs": ["doc-admit-2021"], "name": "Fakeazole", "dose": "500 mg", "schedule": "twice a day",
-     "purpose": "Antibiotic after surgery", "start_date": "2021-04-09", "end_date": "2021-04-16", "status": "stopped"},
-    {"id": "med-demoprofen", "docs": ["doc-er-2019"], "name": "Demoprofen", "dose": "400 mg", "schedule": "as needed",
-     "purpose": "Ankle pain", "start_date": "2019-06-18", "end_date": "2019-07-15", "status": "stopped"}
-  ],
-  "conditions": [
-    {"id": "cond-htn", "name": "High blood pressure", "status": "active", "first_noted": "2023-05"},
-    {"id": "cond-prediabetes", "name": "Prediabetes", "status": "active", "first_noted": "2023-05"},
-    {"id": "cond-fibula", "name": "Fibula fracture (right)", "status": "resolved", "first_noted": "2019-06-18"}
-  ],
-  "allergies": [
-    {"id": "allergy-sampleillin", "substance": "Sampleillin", "reaction": "Hives", "severity": "moderate"}
-  ],
-  "imaging": [
-    {"id": "img-2021-04-09-ct", "date": "2021-04-09", "modality": "CT", "description": "CT abdomen/pelvis",
-     "facility": "Riverside General Hospital", "location": "CD in the blue folder"}
-  ],
-  "providers": [
-    {"id": "prov-testwell", "name": "Dr. Sam Testwell", "specialty": "Family medicine", "facility": "Maple Street Family Practice", "phone": "555-0100"},
-    {"id": "prov-placeholder", "name": "Dr. Casey Placeholder", "specialty": "Orthopedics", "facility": "Maple Street Orthopedics", "phone": "555-0199"}
-  ],
-  "financial": [
-    {"id": "fin-2021-er", "docs": ["doc-bill-2021"], "date": "2021-05-20", "kind": "Statement", "payee": "Riverside General Hospital",
-     "description": "Appendectomy admission", "charged": 18450.00,
-     "encounter_id": "enc-2021-04-09-admit"}
-  ]
+ "_note": "Made-up demo data for a fictional patient. Not a real person, not real records.",
+ "encounters": [
+  {
+   "id": "enc-2019-06-18-er",
+   "docs": [
+    "doc-er-2019"
+   ],
+   "date": "2019-06-18",
+   "type": "ER / urgent",
+   "facility": "Riverside General Hospital",
+   "provider": "Dr. Robin Example (ER)",
+   "reason": "Rolled ankle playing basketball",
+   "summary": "X-ray showed a hairline fracture of the distal fibula. Splinted, crutches, follow up with orthopedics."
+  },
+  {
+   "id": "enc-2019-06-25-ortho",
+   "docs": [
+    "doc-ortho-2019"
+   ],
+   "date": "2019-06-25",
+   "type": "Office",
+   "facility": "Maple Street Orthopedics",
+   "provider": "Dr. Casey Placeholder",
+   "reason": "Ankle fracture follow-up",
+   "summary": "Walking boot for 6 weeks, then physical therapy."
+  },
+  {
+   "id": "enc-2021-04-09-admit",
+   "docs": [
+    "doc-admit-2021",
+    "doc-labs-2021"
+   ],
+   "date": "2021-04-09",
+   "end_date": "2021-04-11",
+   "type": "Inpatient",
+   "facility": "Riverside General Hospital",
+   "provider": "Dr. Morgan Demo (hospitalist)",
+   "reason": "Appendicitis",
+   "summary": "CT confirmed acute appendicitis. Laparoscopic appendectomy on 4/9; home on day 2."
+  },
+  {
+   "id": "enc-2023-05-02-annual",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2023-05-02",
+   "type": "Office",
+   "facility": "Maple Street Family Practice",
+   "provider": "Dr. Sam Testwell",
+   "reason": "Annual physical",
+   "summary": "A1c borderline; started Examplol for blood pressure."
+  }
+ ],
+ "tests": [
+  {
+   "id": "test-2019-06-18-xray",
+   "docs": [
+    "doc-er-2019"
+   ],
+   "date": "2019-06-18",
+   "category": "imaging",
+   "name": "X-ray right ankle",
+   "body_part": "Ankle",
+   "facility": "Riverside General Hospital",
+   "result": "Nondisplaced hairline fracture of the distal fibula.",
+   "abnormal": 1,
+   "encounter_id": "enc-2019-06-18-er"
+  },
+  {
+   "id": "test-2021-04-09-ct",
+   "docs": [
+    "doc-admit-2021"
+   ],
+   "date": "2021-04-09",
+   "category": "imaging",
+   "name": "CT abdomen and pelvis with contrast",
+   "body_part": "Abdomen",
+   "facility": "Riverside General Hospital",
+   "result": "Dilated appendix with surrounding inflammation, no abscess.",
+   "abnormal": 1,
+   "encounter_id": "enc-2021-04-09-admit"
+  },
+  {
+   "id": "test-2023-05-02-ecg",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2023-05-02",
+   "category": "cardiac",
+   "name": "ECG",
+   "facility": "Maple Street Family Practice",
+   "result": "Normal sinus rhythm.",
+   "abnormal": 0,
+   "encounter_id": "enc-2023-05-02-annual"
+  }
+ ],
+ "labs": [
+  {
+   "id": "lab-1",
+   "docs": [
+    "doc-labs-2021"
+   ],
+   "date": "2021-04-09",
+   "panel": "CBC",
+   "analyte": "WBC",
+   "value": "14.2 K/uL",
+   "num": 14.2,
+   "unit": "K/uL",
+   "ref_range": "4.5-11.0",
+   "flag": "H",
+   "facility": "Riverside General Hospital"
+  },
+  {
+   "id": "lab-2",
+   "docs": [
+    "doc-labs-2021"
+   ],
+   "date": "2021-04-10",
+   "panel": "CBC",
+   "analyte": "WBC",
+   "value": "11.6 K/uL",
+   "num": 11.6,
+   "unit": "K/uL",
+   "ref_range": "4.5-11.0",
+   "flag": "H",
+   "facility": "Riverside General Hospital"
+  },
+  {
+   "id": "lab-3",
+   "docs": [
+    "doc-labs-2021"
+   ],
+   "date": "2021-04-11",
+   "panel": "CBC",
+   "analyte": "WBC",
+   "value": "8.9 K/uL",
+   "num": 8.9,
+   "unit": "K/uL",
+   "ref_range": "4.5-11.0",
+   "facility": "Riverside General Hospital"
+  },
+  {
+   "id": "lab-4",
+   "docs": [
+    "doc-labs-2021"
+   ],
+   "date": "2021-04-09",
+   "panel": "BMP",
+   "analyte": "Glucose",
+   "value": "112 mg/dL",
+   "num": 112,
+   "unit": "mg/dL",
+   "ref_range": "74-106",
+   "flag": "H",
+   "facility": "Riverside General Hospital"
+  },
+  {
+   "id": "lab-5",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2022-05-03",
+   "analyte": "Hemoglobin A1c",
+   "value": "5.6 %",
+   "num": 5.6,
+   "unit": "%",
+   "ref_range": "4.0-5.6",
+   "facility": "Maple Street Family Practice"
+  },
+  {
+   "id": "lab-6",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2023-05-02",
+   "analyte": "Hemoglobin A1c",
+   "value": "6.0 %",
+   "num": 6.0,
+   "unit": "%",
+   "ref_range": "4.0-5.6",
+   "flag": "H",
+   "facility": "Maple Street Family Practice"
+  },
+  {
+   "id": "lab-7",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2023-05-02",
+   "analyte": "Glucose",
+   "value": "101 mg/dL",
+   "num": 101,
+   "unit": "mg/dL",
+   "ref_range": "74-106",
+   "facility": "Maple Street Family Practice"
+  },
+  {
+   "id": "lab-8",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "date": "2024-05-07",
+   "analyte": "Hemoglobin A1c",
+   "value": "5.7 %",
+   "num": 5.7,
+   "unit": "%",
+   "ref_range": "4.0-5.6",
+   "flag": "H",
+   "facility": "Maple Street Family Practice"
+  }
+ ],
+ "procedures": [
+  {
+   "id": "proc-2021-04-09-appy",
+   "docs": [
+    "doc-admit-2021"
+   ],
+   "date": "2021-04-09",
+   "name": "Laparoscopic appendectomy",
+   "facility": "Riverside General Hospital",
+   "provider": "Dr. Alex Sampleton (surgery)",
+   "notes": "Uncomplicated.",
+   "encounter_id": "enc-2021-04-09-admit"
+  }
+ ],
+ "medications": [
+  {
+   "id": "med-examplol-1",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "name": "Examplol",
+   "dose": "10 mg",
+   "schedule": "every morning",
+   "purpose": "Blood pressure",
+   "start_date": "2023-05-02",
+   "end_date": "2024-05-07",
+   "status": "stopped",
+   "prescriber": "Dr. Sam Testwell",
+   "notes": "Dose raised at the 2024 physical."
+  },
+  {
+   "id": "med-examplol-2",
+   "docs": [
+    "doc-annual-2023"
+   ],
+   "name": "Examplol",
+   "dose": "20 mg",
+   "schedule": "every morning",
+   "purpose": "Blood pressure",
+   "start_date": "2024-05-07",
+   "status": "active",
+   "prescriber": "Dr. Sam Testwell"
+  },
+  {
+   "id": "med-fakeazole",
+   "docs": [
+    "doc-admit-2021"
+   ],
+   "name": "Fakeazole",
+   "dose": "500 mg",
+   "schedule": "twice a day",
+   "purpose": "Antibiotic after surgery",
+   "start_date": "2021-04-09",
+   "end_date": "2021-04-16",
+   "status": "stopped"
+  },
+  {
+   "id": "med-demoprofen",
+   "docs": [
+    "doc-er-2019"
+   ],
+   "name": "Demoprofen",
+   "dose": "400 mg",
+   "schedule": "as needed",
+   "purpose": "Ankle pain",
+   "start_date": "2019-06-18",
+   "end_date": "2019-07-15",
+   "status": "stopped"
+  }
+ ],
+ "conditions": [
+  {
+   "id": "cond-htn",
+   "name": "High blood pressure",
+   "status": "active",
+   "first_noted": "2023-05"
+  },
+  {
+   "id": "cond-prediabetes",
+   "name": "Prediabetes",
+   "status": "active",
+   "first_noted": "2023-05"
+  },
+  {
+   "id": "cond-fibula",
+   "name": "Fibula fracture (right)",
+   "status": "resolved",
+   "first_noted": "2019-06-18"
+  }
+ ],
+ "allergies": [
+  {
+   "id": "allergy-sampleillin",
+   "substance": "Sampleillin",
+   "reaction": "Hives",
+   "severity": "moderate"
+  }
+ ],
+ "imaging": [
+  {
+   "id": "img-2021-04-09-ct",
+   "date": "2021-04-09",
+   "modality": "CT",
+   "description": "CT abdomen/pelvis",
+   "facility": "Riverside General Hospital",
+   "location": "CD in the blue folder"
+  }
+ ],
+ "providers": [
+  {
+   "id": "prov-testwell",
+   "name": "Dr. Sam Testwell",
+   "specialty": "Family medicine",
+   "facility": "Maple Street Family Practice",
+   "phone": "555-0100"
+  },
+  {
+   "id": "prov-placeholder",
+   "name": "Dr. Casey Placeholder",
+   "specialty": "Orthopedics",
+   "facility": "Maple Street Orthopedics",
+   "phone": "555-0199"
+  }
+ ]
 }

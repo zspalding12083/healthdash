@@ -87,7 +87,7 @@ class Uploads:
     def add(self, name, data, source='dashboard'):
         name = safe_name(name)
         ext = os.path.splitext(name)[1].lower()
-        if ext not in TYPES or (ext == '.html' and source != 'plugin'):
+        if ext not in TYPES or (ext == '.html' and source not in ('plugin', 'export')):
             raise ValidationError('only PDFs, pictures (JPG, PNG, TIFF) and health summary exports (.zip, .xml) can be added')
         if ext == '.html':
             data = data.lstrip()
@@ -155,7 +155,7 @@ class Uploads:
         self.store.set_upload_result(
             sha, text=text, pages=len(ex['pages']), ocr_pages=ex.get('ocr_pages', []),
             title=r['title'], doc_date=r['doc_date'], category=r['category'], facility=r['facility'],
-            status='done', needs_review=bool(questions), review_note='\n'.join(questions) or None,
+            status='processing', needs_review=bool(questions), review_note='\n'.join(questions) or None,
             duplicate_of=dup['id'] if dup else None, classified=classify.VERSION)
         if d.get('ext') == '.html' and not reuse_text:
             # a page saved before it finished loading is replaced by the fuller save
@@ -165,23 +165,20 @@ class Uploads:
                 if len(old) >= 10 and len(new) > len(old) and len(old & new) / len(old) >= 0.9:
                     self.delete(oid)
         if dup and dup['how'] == 'copy':
+            self.store.set_upload_result(sha, status='done')
             return r  # nothing new to add from a copy
         new_labs = [row for row in r['labs'] if not self.store.lab_exists(row)]
         if new_labs:
             rows = [dict(row, id=f'lab-u{sha[:10]}-{i}', docs=[sha]) for i, row in enumerate(new_labs)]
             self.store.upsert_imported('labs', rows)
-        if r['money'] and not self.store.bill_exists(r['doc_date'], r['money']['charged']):
-            self.store.upsert_imported('financial', [{
-                'id': f'fin-u{sha[:10]}', 'docs': [sha], 'date': r['doc_date'], 'kind': r['money']['kind'],
-                'payee': r['facility'], 'description': r['title'], 'charged': r['money']['charged'],
-                'needs_review': bool(r['questions']) or not r['money']['sure']}])
+        self.store.set_upload_result(sha, status='done')   # last, once its entries are in
         return r
 
     def import_summary(self, sha, d):
         """A C-CDA health summary export: a readable page per document, plus its visits, results,
         vital signs, medications, problems and allergies. Re-importing the same or a newer export
         updates instead of doubling; results already recorded from other documents are skipped."""
-        from . import ccda, parsers
+        from . import ccda, fhir, parsers
         from .extract import html_text
         with open(os.path.join(self.files_dir, sha + d['ext']), 'rb') as f:
             data = f.read()
@@ -192,11 +189,19 @@ class Uploads:
                 found.append((hashlib.sha256(xml + b'#page').hexdigest(), name, ccda.parse(xml)))
             except ccda.NotCCDA:
                 bad += 1
-        if not found:
+        extras = ccda.zip_extras(data)
+        bundles = []
+        for name, js in extras['json']:
+            try:
+                bundles.append((name, js, fhir.parse(js)))
+            except fhir.NotFHIR:
+                bad += 1
+        if not found and not bundles:
             raise RuntimeError("no health summary documents could be read in this file")
         when = lambda x: ((x[2]['visit'] or {}).get('date') or x[2]['doc_date'] or '')
         found.sort(key=when)
         label = os.path.splitext(d.get('orig_path') or 'export')[0]
+        invoices, queued = [], 0
         docs, enc, labs, meds, probs, alls, procs, links = [], [], [], {}, {}, {}, {}, []
         HOSPITAL = re.compile(r'inpatient|emergency|observation|admission|hospital', re.I)
         for xsha, name, doc in found:
@@ -214,8 +219,22 @@ class Uploads:
                          'size': len(page), 'text': html_text(page), 'needs_review': False, 'status': 'done',
                          'summary': f"From the health summary export {d.get('orig_path')}."})
             same = self.store.same_day('encounters', v['date']) if v and v.get('date') else []
+            place = ' / '.join(x for x in (v.get('location'), v.get('facility')) if x) if v else ''
+            twin = None
+            if v and v.get('date'):
+                for e in enc + [x for x in self.store.list('encounters') if (x['id'] or '').startswith('ccda-')]:
+                    if (e.get('date') or '')[:10] == v['date'][:10] and (e.get('type') or '').lower() == (v['kind'] or 'office visit').lower() \
+                            and (e.get('facility') or '') == place:
+                        twin = e
+                        break
             if same:   # already on the dashboard from other records: link this document to it
                 links.append(('encounters', same[0]['id'], xsha))
+            elif twin:  # the same visit in another file of this or an earlier export
+                if twin in enc:
+                    twin['docs'] = twin['docs'] + [xsha]
+                    twin['provider'] = twin.get('provider') or v.get('provider') or None
+                else:
+                    links.append(('encounters', twin['id'], xsha))
             elif v and v.get('date'):
                 enc.append({'id': ccda.record_ids('visit', v.get('id') or xsha), 'docs': [xsha], 'date': v['date'],
                             'end_date': v.get('end_date') if v.get('end_date') != v['date'] else None,
@@ -224,8 +243,12 @@ class Uploads:
                             'summary': ('Diagnoses: ' + v['diagnoses']) if v.get('diagnoses') else None})
             for r in doc['labs']:
                 labs.append(dict(r, docs=[xsha], facility=doc['facility']))
-            listed = set()
+            listed, given = set(), []
             for m in doc['medications']:
+                if stay and m.get('start_date') and v.get('date') and \
+                        v['date'][:10] <= m['start_date'][:10] <= (v.get('end_date') or v['date'])[:10]:
+                    given.append(m['name'])   # given in the hospital during this stay
+                    continue
                 k = m['name'].lower()
                 listed.add(k)
                 prev = meds.get(k)
@@ -235,12 +258,72 @@ class Uploads:
                 for k, m in meds.items():
                     if k not in listed and not m.get('gone') and not m.get('end_date') and m.get('status') == 'active':
                         m['gone'] = when((xsha, name, doc))
+            if given and enc and enc[-1]['docs'] == [xsha]:
+                names = list(dict.fromkeys(ccda.drug_key(g).title() for g in given))
+                enc[-1]['summary'] = ((enc[-1].get('summary') or '') + ' Medicines given during the stay: '
+                                      + ', '.join(names[:25]) + ('…' if len(names) > 25 else '') + '.').strip()
             for p in doc['problems']:
                 probs[p['name'].lower()] = dict(p, docs=[xsha])
             for a in doc['allergies']:
                 alls.setdefault(a['substance'].lower(), dict(a, docs=[xsha]))
             for p in doc['procedures']:
                 procs.setdefault((p['name'].lower(), p.get('date')), dict(p, docs=[xsha], facility=doc['facility']))
+        # a FHIR bundle (FollowMyHealth's AllPatientData.json): a summary page and a messages page
+        for name, js, f in bundles:
+            def page_doc(pid, title, page, category='other', date=None):
+                with open(os.path.join(self.files_dir, pid + '.html'), 'w', encoding='utf-8') as fh:
+                    fh.write(page)
+                docs.append({'id': pid, 'path': f"{IMPORTED_DIR}/{label}/{title}", 'orig_path': name, 'title': title,
+                             'doc_date': date, 'category': category, 'ext': '.html', 'size': len(page),
+                             'text': html_text(page), 'needs_review': False, 'status': 'done',
+                             'summary': f"From the export {d.get('orig_path')}."})
+                return pid
+            last = max([v['date'] for v in f['visits']] + [m['date'] or '' for m in f['messages']] or [''])
+            spid = page_doc(hashlib.sha256(js + b'#page').hexdigest(), 'Patient portal record (all data)',
+                            fhir.summary_page(f, 'Patient portal record (all data)'), date=last or None)
+            if f['messages']:
+                page_doc(hashlib.sha256(js + b'#messages').hexdigest(), 'Portal messages',
+                         fhir.messages_page(f['messages']), date=max(m['date'] or '' for m in f['messages']) or None)
+            for v in f['visits']:
+                same = self.store.same_day('encounters', v['date'], days=0)
+                if same:
+                    links.append(('encounters', same[0]['id'], spid))
+                else:
+                    enc.append({'id': ccda.record_ids('fvisit', v['date'], v['kind']), 'docs': [spid], 'date': v['date'],
+                                'type': v['kind'], 'provider': v['provider'], 'reason': v['reason']})
+            for r in f['labs']:
+                labs.append(dict(r, docs=[spid]))
+            for m in f['medications']:
+                k = (m['name'].lower(), m['start_date'])
+                if k not in {(x['name'].lower(), x.get('start_date')) for x in meds.values()}:
+                    meds[f"fhir|{m['name'].lower()}|{m['start_date']}"] = dict(m, docs=[spid], first=m['start_date'],
+                                                                               last_seen=m['start_date'], gone=None, fixed=True)
+            for p in f['problems']:
+                probs.setdefault(p['name'].lower(), dict(p, docs=[spid]))
+            for a in f['allergies']:
+                alls.setdefault(a['substance'].lower(), dict(a, docs=[spid]))
+            for p in f['procedures']:
+                procs.setdefault((p['name'].lower(), p.get('date')), dict(p, docs=[spid], facility=None))
+            # scans: named by what the export says they are, with their date, then read like any upload
+            kinds = {'slab': 'Lab report scan', 'sekg': 'EKG', 'srad': 'Imaging report scan'}
+            for sname, blob in extras['scans']:
+                meta = f['files'].get(sname.rsplit('/', 1)[-1], {})
+                nice = ' '.join(x for x in (kinds.get((meta.get('type') or '').lower(), meta.get('type') or 'Scan'),
+                                            meta.get('date')) if x)
+                ext = os.path.splitext(sname)[1].lower()
+                try:
+                    self.add(f'{nice}{ext}', blob, source='export')
+                    queued += 1
+                except ValidationError:
+                    extras['skipped'].append(sname)
+            for hname, blob in extras['html']:
+                try:
+                    self.add(os.path.basename(hname), blob, source='export')
+                    queued += 1
+                except ValidationError:
+                    extras['skipped'].append(hname)
+        if not found and not bundles:
+            raise RuntimeError("no health summary documents could be read in this file")
         self.store.upsert_documents(docs)
         for x in docs:
             self.store.set_has_file(x['id'])
@@ -255,7 +338,7 @@ class Uploads:
         med_rows = []
         for m in meds.values():
             end, status, notes = m.get('end_date'), 'active', None
-            if end or m.get('status') in ('aborted', 'completed', 'cancelled'):
+            if end or m.get('status') in ('aborted', 'completed', 'cancelled', 'stopped'):
                 status = 'stopped'
             if m.get('gone') and not end:
                 status, end = 'stopped', m['gone']
@@ -264,16 +347,39 @@ class Uploads:
                              'name': m['name'], 'dose': m.get('dose'), 'schedule': m.get('schedule'),
                              'start_date': m.get('start_date') or m['first'], 'end_date': end, 'status': status,
                              'notes': notes or ('Start date is when it first appears in this export.' if not m.get('start_date') else None)})
-        have_cond = {c['name'].lower() for c in self.store.list('conditions') if not (c['id'] or '').startswith('ccda-')}
-        have_all = {a['substance'].lower() for a in self.store.list('allergies') if not (a['id'] or '').startswith('ccda-')}
-        cond_rows = [{'id': ccda.record_ids('cond', p['name']), 'docs': p['docs'], 'name': p['name'],
-                      'status': p['status'], 'first_noted': p.get('first_noted')}
-                     for p in probs.values() if p['name'].lower() not in have_cond]
-        all_rows = [{'id': ccda.record_ids('allergy', a['substance']), 'docs': a['docs'], 'substance': a['substance'],
-                     'reaction': a.get('reaction')}
-                    for a in alls.values() if not any(a['substance'].lower().startswith(h[:6]) for h in have_all)]
+        # problems and allergies: an earlier onset date or a known reaction is never lost to a later file
+        existing_c = {c['id']: c for c in self.store.list('conditions')}
+        have_cond = {c['name'].lower() for c in existing_c.values() if not (c['id'] or '').startswith('ccda-')}
+        cond_rows = []
+        for p in probs.values():
+            if p['name'].lower() in have_cond:
+                continue
+            rid = ccda.record_ids('cond', p['name'])
+            old = existing_c.get(rid) or {}
+            dates = [x for x in (p.get('first_noted'), old.get('first_noted')) if x]
+            cond_rows.append({'id': rid, 'docs': list(dict.fromkeys((old.get('docs') or []) + p['docs']))[:40],
+                              'name': p['name'], 'status': p['status'], 'first_noted': min(dates) if dates else None})
+        existing_a = {a['id']: a for a in self.store.list('allergies')}
+
+        def first_word(x):
+            w = re.findall(r'[a-z]{5,}', (x or '').lower())
+            return w[0] if w else (x or '').lower()
+        all_rows = []
+        for a in alls.values():
+            rid = ccda.record_ids('allergy', a['substance'])
+            twin = next((x for x in existing_a.values() if x['id'] != rid and first_word(x['substance']) == first_word(a['substance'])), None)
+            if twin:   # the same allergy under another wording: link the document
+                links.extend(('allergies', twin['id'], d) for d in a['docs'])
+                continue
+            old = existing_a.get(rid) or {}
+            all_rows.append({'id': rid, 'docs': list(dict.fromkeys((old.get('docs') or []) + a['docs']))[:40],
+                             'substance': a['substance'], 'reaction': a.get('reaction') or old.get('reaction')})
+            existing_a[rid] = all_rows[-1]
         proc_rows = []
+        have_proc = {(x['name'] or '').lower() for x in self.store.list('procedures')}
         for p in procs.values():
+            if not p.get('date') and any(h.startswith(p['name'].lower()[:10]) for h in have_proc):
+                continue   # an undated history item already listed
             same = self.store.same_day('procedures', p['date'], days=3) if p.get('date') else []
             if same:
                 links.append(('procedures', same[0]['id'], p['docs'][0]))
@@ -288,16 +394,23 @@ class Uploads:
                            ('conditions', cond_rows), ('allergies', all_rows), ('procedures', proc_rows)):
             if rows:
                 counts[kind] = self.store.upsert_imported(kind, rows)
+        merged = self.store.consolidate_meds(ccda.drug_key, ccda.record_ids)
         added = {k: v['added'] + v['updated'] for k, v in counts.items()}
-        span = f"{when(found[0])} to {when(found[-1])}"
+        added['medications'] = merged['entries']
+        span = f"{when(found[0])} to {when(found[-1])}" if found else 'patient portal data'
         summary = (f"Imported {len(docs)} documents ({span}): {added.get('encounters', 0)} visits, "
-                   f"{added.get('labs', 0)} results and vital signs, {added.get('medications', 0)} medications, "
+                   f"{added.get('labs', 0)} results and vital signs, medications now {added.get('medications', 0)} entries (one per drug per period of use), "
                    f"{added.get('conditions', 0)} problems, {added.get('allergies', 0)} allergies, "
                    f"{added.get('procedures', 0)} procedures."
                    + (f" Linked to {len(links)} entr{'y' if len(links) == 1 else 'ies'} already on the dashboard." if links else '')
-                   + (f" {bad} file(s) could not be read." if bad else ''))
+                   + (f" {queued} scans and other documents added to be read separately." if queued else '')
+                   + (f" {bad} file(s) could not be read." if bad else '')
+                   + (f" Left out: {', '.join(os.path.basename(x) for x in extras['skipped'][:12])}"
+                      + (f" and {len(extras['skipped']) - 12} more" if len(extras['skipped']) > 12 else '') + '.'
+                      if extras['skipped'] else ''))
         self.store.set_upload_result(sha, title=f"Health summary export ({label})", category='other',
-                                     doc_date=when(found[-1]) or None, facility=found[-1][2]['facility'],
+                                     doc_date=(when(found[-1]) if found else None) or None,
+                                     facility=found[-1][2]['facility'] if found else None,
                                      status='done', needs_review=False, review_note=None, text=summary,
                                      summary=summary, classified=classify.VERSION)
         return {'questions': [], 'labs': [], 'money': None}

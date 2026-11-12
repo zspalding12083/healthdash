@@ -50,7 +50,7 @@ function portalName(url){
 async function send(name, body, kind){
   const t = (await getSettings()).target;
   if(!t.url || !t.key) throw new Error('Add a dashboard (address and plugin key) in the settings first.');
-  const r = await fetch(`${t.url}/api/upload?source=plugin&name=${encodeURIComponent(name)}`,
+  const r = await fetch(`${t.url}/api/upload?source=plugin&p=${encodeURIComponent(t.person)}&name=${encodeURIComponent(name)}`,
                         {method: 'POST', headers: {'Authorization': 'Bearer ' + t.key, 'Content-Type': kind}, body});
   const j = await r.json().catch(() => ({}));
   if(r.status === 401) throw new Error(`${t.label || 'The dashboard'} did not accept the plugin key. Create a new one under Accounts.`);
@@ -63,7 +63,7 @@ async function send(name, body, kind){
 async function follow(id, name, t){
   for(let i = 0; i < 40; i++){
     await new Promise(r => setTimeout(r, i < 5 ? 2000 : 5000));
-    const r = await fetch(`${t.url}/api/documents/${id}`, {headers: {'Authorization': 'Bearer ' + t.key}}).catch(() => null);
+    const r = await fetch(`${t.url}/api/documents/${id}?p=${encodeURIComponent(t.person)}`, {headers: {'Authorization': 'Bearer ' + t.key}}).catch(() => null);
     if(!r) continue;
     if(r.status === 404){ return log({key: id, state: 'skipped', name, note: 'Nothing new on this page; not kept.'}); }
     const d = await r.json().catch(() => null);
@@ -124,6 +124,17 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     seen.delete(page.textHash);   // a deliberate click always sends
     await savePage(page, 'button');
     return {ok: true};
+  }
+  if(msg.cmd === 'people'){      // the popup's "Save to": who is on each dashboard
+    const out = [];
+    for(const [i, d] of s.dashboards.entries()){
+      try{
+        const r = await fetch(`${dashboardOrigin(d.url)}/api/people`, {headers: {'Authorization': 'Bearer ' + d.key}});
+        const list = r.ok ? await r.json() : [{id: 'main', name: d.label || 'Main'}];
+        list.forEach(p => out.push({dash: i, person: p.id, label: s.dashboards.length > 1 ? `${p.name} (${d.label || d.url})` : p.name}));
+      }catch(e){ out.push({dash: i, person: 'main', label: d.label || d.url}); }
+    }
+    return out;
   }
   if(msg.cmd === 'test'){        // the settings page's "Test connection" button
     try{

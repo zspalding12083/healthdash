@@ -6,7 +6,8 @@ const DEFAULTS = {
   auto: false,               // save every portal page you open (otherwise only the "Save this page" button)
   pdfs: true,                // send PDFs you download from the portal sites
   dashboards: [],            // [{label, url, key}]: one per person's dashboard
-  current: 0,                // which one "Save to" sends to
+  current: 0,                // which dashboard "Save to" sends to
+  person: 'main',            // and which person on it
   dashboard: '', key: '',    // (1.0.x single-dashboard settings, read once and moved into the list)
   sites: [                   // match patterns: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
     '*://*/MyChart/*',                 // Epic MyChart, on each health system's own domain
@@ -22,7 +23,7 @@ async function getSettings(){
   if(!s.dashboards.length && s.dashboard) s.dashboards = [{label: 'Dashboard', url: s.dashboard, key: s.key}];
   s.current = Math.max(0, Math.min(s.current || 0, s.dashboards.length - 1));
   const t = s.dashboards[s.current] || {};
-  s.target = {label: t.label || '', url: dashboardOrigin(t.url || ''), key: t.key || ''};
+  s.target = {label: t.label || '', url: dashboardOrigin(t.url || ''), key: t.key || '', person: s.person || 'main'};
   return s;
 }
 
