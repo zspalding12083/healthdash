@@ -179,6 +179,11 @@ PROCEDURE_SHORT = [(r'\bi\s*(and|&)\s*d\b', 'incision drainage'), (r'\begd\b', '
                    (r'\bd\s*(and|&)\s*c\b', 'dilation curettage'), (r'\blap chole\b', 'laparoscopic cholecystectomy')]
 
 
+# a drug given by a nurse or anesthetist rather than taken: anesthesia, injections, IV fluids
+GIVEN_RE = re.compile(r'\(anes\)|\binj\b|injection|\biv\b|intravenous|syringe|\bmdv\b|\bemul\b|irrigation|'
+                      r'premix|\bvial\b|lactated ringer|\blr\b|sodium chloride|dextrose \d|iopamidol|iohexol|gado\w+', re.I)
+
+
 def is_otc(name, extra=None):
     """True for an over-the-counter medicine or supply ("Tylenol CAPS", "Loratadine 10 MG"), not for a
     prescription combination or strength that contains one ("Oxycodone-Acetaminophen 5-325").
@@ -284,9 +289,36 @@ class Store:
                  'providers': 'name'}.get(kind, 'date DESC, id')
         rows = [self._decode(r) for r in self._rows(f'SELECT * FROM {kind} ORDER BY {order}')]
         if kind == 'medications':
+            given = self._given_ids(rows)
             for r in rows:
                 r['otc'] = self.is_otc(r['name'])
+                r['given'] = r['id'] in given
         return rows
+
+    def _given_ids(self, meds):
+        """Medication lines from a health summary that were given, not taken: over a day or two, on
+        the day of a procedure, or written as an injection, IV or anesthesia drug (fentanyl in the
+        operating room, fluids, a numbing shot). Entries made or edited by hand never count."""
+        from datetime import date as D
+        def d(v):
+            try:
+                return D.fromisoformat((v or '')[:10]) if len(v or '') >= 10 else None
+            except ValueError:
+                return None
+        days = set()
+        for (v,) in self.db.execute("SELECT date FROM procedures WHERE date IS NOT NULL").fetchall():
+            if d(v):
+                days.add(d(v).toordinal())
+        out = set()
+        for m in meds:
+            if not (m['id'] or '').startswith('ccda-') or m.get('edited') or m['status'] == 'active':
+                continue
+            s0, e0 = d(m['start_date']), d(m['end_date']) or d(m['start_date'])
+            if not s0 or not e0 or (e0 - s0).days > 2:
+                continue
+            if GIVEN_RE.search(m['name'] or '') or any(s0.toordinal() + k in days for k in (-1, 0, 1)):
+                out.add(m['id'])
+        return out
 
     def get(self, kind, rid):
         if kind not in KINDS:
@@ -1126,7 +1158,7 @@ class Store:
             add('imaging', r['id'], r['date'], f"{r['modality'] or ''} {r['description'] or ''}".strip(),
                 r['notes'], r['facility'], None, r['docs'])
         for r in self.list('medications'):
-            if r['otc']:
+            if r['otc'] or r['given']:
                 continue
             label = f"{r['name']} {r['dose'] or ''}".strip()
             add('medications', r['id'], r['start_date'], f'Started {label}', r['purpose'], None,

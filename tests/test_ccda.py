@@ -286,6 +286,21 @@ class CcdaTests(unittest.TestCase):
             self.assertEqual(store.get("tests", "test-ct")["docs"], ["a" * 64])
             store.close()
 
+    def test_drugs_given_during_a_procedure_are_set_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            store.upsert_imported("procedures", [{"id": "p1", "date": "2020-05-02", "name": "Knee arthroscopy"}])
+            store.upsert_imported("medications", [
+                {"id": "ccda-med-a", "name": "samplazolam (Sampled (ANES)) 2 mg/2 mL", "start_date": "2019-01-01", "end_date": "2019-01-01", "status": "stopped"},
+                {"id": "ccda-med-b", "name": "Examplol 10 MG Oral Tablet", "start_date": "2020-05-02", "end_date": "2020-05-02", "status": "stopped"},
+                {"id": "ccda-med-c", "name": "Fakeazole 500 MG Oral Tab", "start_date": "2021-01-01", "end_date": "2021-01-08", "status": "stopped"},
+                {"id": "med-hand", "name": "Demolin Inj", "start_date": "2022-01-01", "end_date": "2022-01-01", "status": "stopped"},
+            ])
+            given = {m["id"] for m in store.list("medications") if m["given"]}
+            self.assertEqual(given, {"ccda-med-a", "ccda-med-b"})   # anesthesia; a one-day line on the day of a procedure
+            self.assertFalse(any(e["id"] in given for e in store.timeline()))
+            store.close()
+
     def test_refuses_entities(self):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')

@@ -312,7 +312,8 @@ VIEWS.meds = async () => {
   const meds = await load('medications','/api/medications');
   const al = await load('allergies','/api/allergies');
   const otc = meds.filter(m => m.otc);   // over the counter: listed, without start and stop dates
-  const rx = meds.filter(m => !m.otc);
+  const given = meds.filter(m => m.given && !m.otc);   // given around a procedure, not taken
+  const rx = meds.filter(m => !m.otc && !m.given);
   const current = rx.filter(m => m.status==='active' || (!m.end_date && !m.status));
   const past = rx.filter(m => !current.includes(m));
   let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><span><button class="btn" id="medlist">Paste current list</button> <button class="btn" data-add="medications">Add</button></span></div>
@@ -345,6 +346,10 @@ VIEWS.meds = async () => {
   }
   if(past.length) html += `<div class="panel"><h2>Past medications (${past.length})</h2><div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>For</th><th data-sort>Started</th><th data-sort>Stopped</th><th class="hide-sm">Why stopped / notes</th></tr></thead><tbody>` +
     past.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.purpose)}</td><td class="nowrap" data-v="${esc(m.start_date||'')}">${fdate(m.start_date)}</td><td class="nowrap" data-v="${esc(m.end_date||'')}">${fdate(m.end_date)}</td><td class="hide-sm small">${esc(m.notes)}</td></tr>`).join('') + `</tbody></table></div></div>`;
+  if(given.length) html += `<div class="panel"><details><summary><b>Given during procedures and hospital visits (${given.length})</b> <span class="muted small">anesthesia, injections, IV fluids: hidden from the lists above</span></summary>
+    <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Date</th></tr></thead><tbody>` +
+    given.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td>${esc(m.name)}</td><td class="nowrap" data-v="${esc(m.start_date||'')}">${fdate(m.start_date)}</td></tr>`).join('') +
+    `</tbody></table></div></details></div>`;
   html += `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Allergies</h2><button class="btn" data-add="allergies">Add</button></div>` +
     (al.length ? `<table><tbody>${al.map(a => `<tr class="click" data-open="allergies|${esc(a.id)}"><td><b>${esc(a.substance)}</b></td><td>${esc(a.reaction)}</td><td class="muted">${esc(a.severity||'')}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">None recorded.</div>') + `</div>`;
   return html;
