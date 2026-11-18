@@ -1,4 +1,9 @@
-<p align="center"><img src="docs/logo.svg" width="112" alt="healthdash logo"></p>
+<p align="left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/zs-mark-reverse.svg">
+    <img alt="ZS mark" src="assets/brand/zs-mark.svg" height="72">
+  </picture>
+</p>
 
 # healthdash
 
@@ -240,14 +245,14 @@ author is **not liable** for any damages or losses of any kind arising from usin
 to use it, including medical decisions, missed or wrong information, data loss, or disclosure of
 personal or health information. It is not medical, legal or financial advice. You are responsible
 for checking everything it shows against the original documents and for protecting your own
-records. The [License](LICENSE.md) has the full "No Liability" terms, which apply as far as the law
-allows.
+records. The [License](LICENSE) has the full warranty disclaimer and limitation of liability, which
+apply as far as the law allows.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE.md). You may use, change and share this for any
-noncommercial purpose: personal use, family use, hobby projects, study, and use by nonprofits,
-schools, public health organizations and government. Selling it, or using it in or for a business,
-is not allowed without written permission. For commercial use, open an issue to ask.
+MIT, see [LICENSE](LICENSE). The ZS mark files in `assets/brand/` are not covered by the MIT License:
+they are all rights reserved and may be used only to identify these projects.
 
-Required Notice: Copyright 2026 zspalding12083 (https://github.com/zspalding12083)
+---
+
+<img src="assets/brand/zs-mark.svg" alt="" height="20" align="top"> A [zspalding12083](https://github.com/zspalding12083) project. Systems · Security · Support.
