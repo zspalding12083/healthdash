@@ -78,7 +78,10 @@ print(f'leak check: {len(terms)} private terms', file=sys.stderr)
 EOF
 
 [ -s "$TERMS" ] || { echo "no private terms found; refusing to export without a leak check"; exit 1; }
-if hits=$(grep -rniwF -f "$TERMS" --exclude-dir=.git "$DEST"); then
+# The company name is public on purpose; drop it from matching lines before re-checking them.
+ALLOWED_PHRASE='Zachary Spalding Technology Services'
+if hits=$(cd "$DEST" && grep -rniwF -f "$TERMS" --exclude-dir=.git . \
+          | sed "s/$ALLOWED_PHRASE//Ig" | grep -iwF -f "$TERMS"); then
     echo "PRIVATE TERMS FOUND in $DEST; nothing should be published until these are gone:"
     echo "$hits" | cut -c1-200
     exit 1

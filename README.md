@@ -1,7 +1,7 @@
 <p align="left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/zs-mark-reverse.svg">
-    <img alt="ZS mark" src="assets/brand/zs-mark.svg" height="72">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/zs-logo-horizontal-dark-bg.svg">
+    <img alt="ZS Tech | Zachary Spalding Technology Services" src="assets/brand/zs-logo-horizontal-light-bg.svg" height="64">
   </picture>
 </p>
 
@@ -250,9 +250,9 @@ apply as far as the law allows.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The ZS mark files in `assets/brand/` are not covered by the MIT License:
-they are all rights reserved and may be used only to identify these projects.
+MIT, see [LICENSE](LICENSE). The ZS Tech mark files in `assets/brand/` are not covered by the MIT
+License: they are all rights reserved and may be used only to identify ZS Tech (Zachary Spalding Technology Services) and its projects.
 
 ---
 
-<img src="assets/brand/zs-mark.svg" alt="" height="20" align="top"> A [zspalding12083](https://github.com/zspalding12083) project. Systems · Security · Support.
+<img src="assets/brand/zs-mark.svg" alt="" height="20" align="top"> A **ZS Tech** project · Zachary Spalding Technology Services · [zspalding12083](https://github.com/zspalding12083). Systems · Networks · Cloud · Open source.
