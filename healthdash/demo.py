@@ -12,6 +12,7 @@ SAMPLE = os.path.join(config.PROJECT, 'sample')
 
 
 def load_sample(store):
+    """Fill a store with the made-up sample records in sample/ (for trying the dashboard)."""
     with open(os.path.join(SAMPLE, 'documents.json'), encoding='utf-8') as f:
         docs = json.load(f)
     for d in docs:

@@ -36,6 +36,7 @@ def _range(ref):
 
 
 def flag_for(num, ref):
+    """'H' or 'L' for a number outside a normal range like '70-99' or '<5', else None."""
     rng = _range(ref) if ref else None
     if num is None or not rng:
         return None
@@ -91,6 +92,7 @@ _HA_LINE = re.compile(r'^([A-Z][A-Z0-9 #%()/\-]{1,40}?)\s{2,}([<>]?\s*\d[\d.,]*)
 
 
 def cerner_block_labs(text, facility=None):
+    """Result rows from hospital lab printouts laid out as blocks under "Collected:" dates."""
     out, date = [], None
     for raw in text.replace('\f', '\n').splitlines():
         line = re.sub(r'[ \t]{2,}', '  ', raw.strip())
@@ -171,13 +173,150 @@ SYNONYMS.update({
     'heart rate sitting': 'Heart rate', 'body surface area derived from formula': 'Body surface area', 'oxygen saturation in arterial blood by pulse oximetry': 'Oxygen saturation (SpO2)', 'cholesterol, total': 'Cholesterol, total', 'hdl cholesterol': 'HDL', 'ldl-cholesterol': 'LDL',
     'triglycerides': 'Triglycerides', 'bun/creatinine ratio': 'BUN/Creat Ratio', 'mean platelet volume': 'MPV', 'triiodothyronine,free': 'Free T3', 'c-reactive protein, quant': 'CRP',
     'thyroid peroxidase (tpo) ab': 'TPO antibodies', 'immunoglobulin a, qn': 'IgA',
+    'hgb a1c': 'Hemoglobin A1c', 'hba1c': 'Hemoglobin A1c', 'hemoglobin a1c (hgb a1c)': 'Hemoglobin A1c',
+    'glycohemoglobin': 'Hemoglobin A1c', 'glycated hemoglobin': 'Hemoglobin A1c',
 })
+
+# The same test as other labs and portals name it. Only names that can't mean anything else.
+SYNONYMS.update({
+    # cholesterol panel
+    'chol': 'Cholesterol, total', 'cholesterol': 'Cholesterol, total',
+    'trig': 'Triglycerides', 'hdl': 'HDL', 'hdl chol': 'HDL', 'ldl': 'LDL',
+    'ldl chol calc (nih)': 'LDL', 'ldl chol, calculated': 'LDL', 'ldl cholesterol': 'LDL',
+    'ldl cholesterol - calculated': 'LDL', 'ldl cholesterol calc': 'LDL',
+    'vldl cholesterol cal': 'VLDL', 'vldl, calc': 'VLDL', 'vldl cholesterol': 'VLDL',
+    'chol/hdl': 'Cholesterol/HDL ratio', 'chol/hdl ratio': 'Cholesterol/HDL ratio',
+    't. chol/hdl ratio': 'Cholesterol/HDL ratio',
+    # chemistry
+    'glob': 'Globulin', 'globulin': 'Globulin', 'tsh reflex': 'TSH',
+    'egfr-naa': 'eGFR', 'egfr ckd-epi 2021': 'eGFR', 'urea nitrogen': 'BUN',
+    'alanine aminotransferase': 'ALT', 'aspartate aminotransferase': 'AST',
+    'amylase lvl': 'Amylase', 'lipase lvl': 'Lipase', 'ferritin lvl': 'Ferritin', 'vitamin b12 lvl': 'Vitamin B12',
+    'prothrombin time (pt)': 'Prothrombin time', 'protime': 'Prothrombin time',
+    'microalb/creat ratio': 'Microalbumin/creatinine ratio', 'microalbumin/creat ratio': 'Microalbumin/creatinine ratio',
+    # blood counts
+    'lymph': 'Lymphocytes %', 'lymphocytes': 'Lymphocytes %', 'basophils': 'Basophils %',
+    'eosinophils': 'Eosinophils %', 'polys': 'Neutrophils %', 'neutrophils, %': 'Neutrophils %',
+    'absolute neutrophils': 'Neutrophils, absolute', 'polys, abs. count': 'Neutrophils, absolute',
+    'absolute lymph': 'Lymphocytes, absolute', 'lymphs, abs. count': 'Lymphocytes, absolute',
+    'lymphocytes (absolute)': 'Lymphocytes, absolute',
+    'absolute mono': 'Monocytes, absolute', 'monos, abs. count': 'Monocytes, absolute',
+    'absolute eos': 'Eosinophils, absolute', 'eos, abs. count': 'Eosinophils, absolute',
+    'eosinophils (absolute)': 'Eosinophils, absolute',
+    'absolute baso': 'Basophils, absolute', 'basos, abs. count': 'Basophils, absolute',
+    'basophils (absolute)': 'Basophils, absolute',
+    'absolute immature gran': 'Immature granulocytes, absolute', 'imm gran #': 'Immature granulocytes, absolute',
+    'ig, abs. count': 'Immature granulocytes, absolute', 'ig absolute': 'Immature granulocytes, absolute',
+    'imm gran %': 'Immature granulocytes %',
+    'red blood cell (rbc) count': 'RBC', 'white blood cell (wbc) count': 'WBC',
+    'rdw- cv': 'RDW', 'rdw cv': 'RDW', 'rdw- sd': 'RDW-SD', 'rdw sd': 'RDW-SD',
+    # vital signs
+    'bmi': 'BMI', 'body mass index measured': 'BMI', 'body mass index calculated': 'BMI',
+    'clinical weight': 'Body weight', 'height/length measured': 'Body height',
+    'body surface area calculated': 'Body surface area',
+    'heart rate': 'Heart rate', 'heart rate monitored': 'Heart rate', 'peripheral pulse rate': 'Heart rate',
+    'respiratory rate': 'Respiratory rate', 'spo2': 'Oxygen saturation (SpO2)',
+    # long official (LOINC) names some hospital portals use
+    'alanine aminotransferase [enzymatic activity/volume] in serum or plasma': 'ALT',
+    'aspartate aminotransferase [enzymatic activity/volume] in serum or plasma': 'AST',
+    'albumin [mass/volume] in serum or plasma': 'Albumin',
+    'alkaline phosphatase [enzymatic activity/volume] in serum or plasma': 'Alkaline phosphatase',
+    'bilirubin.total [mass/volume] in serum or plasma': 'Bilirubin, total',
+    'calcium [mass/volume] in serum or plasma': 'Calcium',
+    'carbon dioxide, total [moles/volume] in serum or plasma': 'CO2 (bicarbonate)',
+    'chloride [moles/volume] in serum or plasma': 'Chloride',
+    'creatinine [mass/volume] in serum or plasma': 'Creatinine',
+    'glucose [mass/volume] in serum or plasma': 'Glucose',
+    'glucose [mass/volume] in capillary blood by glucometer': 'Glucose (fingerstick)',
+    'hematocrit [volume fraction] of blood by automated count': 'Hematocrit',
+    'hemoglobin [mass/volume] in blood': 'Hemoglobin',
+    'leukocytes [#/volume] in blood by automated count': 'WBC',
+    'erythrocytes [#/volume] in blood': 'RBC',
+    'lipase [enzymatic activity/volume] in serum or plasma': 'Lipase',
+    'magnesium [mass/volume] in serum or plasma': 'Magnesium',
+    'mch [entitic mass] by automated count': 'MCH',
+    'mchc [mass/volume] in blood from fetus by automated count': 'MCHC',
+    'mcv [entitic volume] by automated count': 'MCV',
+    'platelets [#/volume] in blood by automated count': 'Platelets',
+    'platelet mean volume [entitic volume] in blood by automated count': 'MPV',
+    'erythrocyte distribution width [entitic volume] by automated count': 'RDW-SD',
+    'potassium [moles/volume] in serum or plasma': 'Potassium',
+    'protein [mass/volume] in serum or plasma': 'Total protein',
+    'sodium [moles/volume] in serum or plasma': 'Sodium',
+    'urea nitrogen [mass/volume] in serum or plasma': 'BUN',
+    'inr in blood by coagulation assay': 'INR',
+    'baso auto': 'Basophils %',
+})
+
+# Urinalysis: every lab names these differently ("UA Spec Grav", "Specific Gravity, Ur (S.G.)", ...)
+for _std, _names in {
+    'Urine RBC': ['ua rbc', 'rbc, urine', 'rbc,urine'],
+    'Urine WBC': ['ua wbc', 'wbc, urine', 'wbc urine'],
+    'Urine bacteria': ['ua bacteria', 'bacteria, urine'],
+    'Urine bilirubin': ['ua bili', 'bilirubin, urine', 'bilirubin, urine dipstick', 'urine bilirubin'],
+    'Urine blood': ['ua blood', 'blood, urine', 'blood, urine dipstick'],
+    'Urine glucose': ['ua glucose', 'glucose, urine, qual', 'glucose, urine dipstick', 'glucose,urine'],
+    'Urine ketones': ['ua ketones', 'ketone, qual', 'ketones, urine dipstick'],
+    'Urine leukocyte esterase': ['ua leuk est', 'leukocyte esterase', 'leukocytes, urine dipstick'],
+    'Urine nitrite': ['ua nitrite', 'nitrite', 'nitrite, ur (ni)', 'nitrite, urine dipstick', 'nitrites, urine'],
+    'Urine pH': ['ua ph', 'ph, ur', 'ph, urine dipstick'],
+    'Urine protein': ['ua protein', 'protein, total, random urine', 'protein, urine dipstick', 'protein,urine'],
+    'Urine specific gravity': ['ua spec grav', 'specific gravity', 'specific gravity, ur (s.g.)',
+                               'specific gravity, urine dipst*', 'specific gravity, urine dipstick'],
+    'Urine urobilinogen': ['ua urobilinogen', 'urobilinogen', 'urobilinogen, urine dipstick'],
+    'Urine epithelial cells': ['ua epithelial', 'epithelial cells'],
+    'Urine color': ['ua color'],
+    'Urine appearance': ['ua appear', 'character'],
+}.items():
+    for _n in _names:
+        SYNONYMS[_n] = _std
+
+# Not results: device and staff details that some portals put in the result list
+JUNK_ANALYTE = re.compile(r'serial ?#|serial number|operator name|^operator\b|lot (number|#)|\banalyzer\b|'
+                          r'^(analyzed|draw|collection|collected|received) (date|time)$|^name of machine$|'
+                          r'\b(collected|performed) by\b|comment\b|\bnote$|^specimen outdate$|\bbf type\b|^bf type', re.I)
 
 
 def _key(name):
     n = re.sub(r'\s+', ' ', name.strip().lower())
+    n = _tidy(n)
     n = re.sub(r',\s*(serum|plasma|blood|whole blood)$', '', n)  # "Glucose, Serum" -> "glucose"
     return n
+
+
+def _tidy(name):
+    """'Hgb A1c.' -> 'Hgb A1c'; 'Hemoglobin A1c A,' (a flag column read into the name) -> 'Hemoglobin A1c'."""
+    name = re.sub(r'\s+[Aa],\s*$', '', name.strip())
+    return name.rstrip(' .,:;')
+
+
+def display_name(name):
+    """How a name is shown: a standard name as written ("BMI", "eGFR"), other all-capitals names in
+    title case ("GLUCOSE POC" -> "Glucose Poc"); every spelling of a standard name in capitals ("Bmi",
+    "Wbc", from older versions) becomes the standard spelling."""
+    canon = _canonical()
+    if name in canon.values():
+        return name
+    if name.lower() in canon:
+        return canon[name.lower()]
+    return name.title() if name.isupper() else name
+
+
+def _canonical():
+    global _CANON
+    if _CANON is None:
+        _CANON = {v.lower(): v for v in SYNONYMS.values()}
+    return _CANON
+
+
+_CANON = None
+
+
+def standard_name(name):
+    """The one name an analyte is shown under."""
+    k = _key(name)
+    return SYNONYMS.get(name.strip().lower()) or SYNONYMS.get(k) or (
+        _tidy(name) if k == _tidy(name).lower() else re.sub(r',\s*(Serum|Plasma|Blood)$', '', _tidy(name), flags=re.I))
 
 
 def normalize(rows):
@@ -185,9 +324,9 @@ def normalize(rows):
     seen, out = set(), []
     for r in rows:
         r = dict(r)
-        k = _key(r['analyte'])
-        r['analyte'] = SYNONYMS.get(r['analyte'].strip().lower()) or SYNONYMS.get(k) or (
-            r['analyte'].strip() if k == r['analyte'].strip().lower() else re.sub(r',\s*(Serum|Plasma|Blood)$', '', r['analyte'].strip(), flags=re.I))
+        if JUNK_ANALYTE.search(r['analyte']):
+            continue
+        r['analyte'] = standard_name(r['analyte'])
         key = (r['date'], r.get('time'), r['analyte'], r['num'] if r['num'] is not None else r['value'])
         if key in seen:
             continue
@@ -212,6 +351,17 @@ _LC_DATE_CELL = re.compile(r'^\d{1,2}/\d{1,2}/\d{2,4}$')
 
 
 _LC_SITE = re.compile(r'^0\d$')                 # the same code as its own column ("WBC     01")
+_LC_LETTER = re.compile(r'\s+[A-D],?$')          # a footnote letter after the name: "BUN B", "Potassium B,"
+_LC_KEEP_LETTER = re.compile(r'(vitamin|hepatitis|hep|type|factor|influenza|flu|group|apolipoprotein|strep|'
+                             r'streptococcus|protein|blood|lipoprotein|immunoglobulin|ig)$', re.I)
+
+
+def labcorp_name(name):
+    """'BUN B' -> 'BUN'; 'Vitamin B' and 'Hepatitis A' stay as they are."""
+    m = _LC_LETTER.search(name)
+    if m and not _LC_KEEP_LETTER.search(name[:m.start()].strip()):
+        return name[:m.start()].strip()
+    return name
 _LC_JUNK_NAME = re.compile(r'\d\s*-\s*\d|>or=|<or=|^(result \d+|written authorization|ambig abbrev)', re.I)
 
 
@@ -288,7 +438,7 @@ def labcorp_labs(text, facility=None):
             num = None if v[0] in '<>' else float(v)
         except ValueError:
             num = None
-        out.append({'date': date, 'analyte': name, 'value': value + (f' {unit}' if unit else ''), 'num': num,
+        out.append({'date': date, 'analyte': labcorp_name(name), 'value': value + (f' {unit}' if unit else ''), 'num': num,
                     'unit': unit, 'ref_range': ref, 'flag': flag or (flag_for(num, ref.replace('-', ' - ')) if ref else None),
                     'facility': facility or 'LabCorp'})
     return out
@@ -307,6 +457,7 @@ _MC_NOT_NAME = re.compile(r'^(view trends|value|results|new|normal range:.*|your
 
 
 def mychart_labs(text, facility=None):
+    """Result rows from a MyChart test result page saved by the browser plugin."""
     if 'Your value is' not in (text or ''):
         return []
     flat = re.sub(r'[ \t]+', ' ', text.replace('\f', '\n'))

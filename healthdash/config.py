@@ -45,6 +45,7 @@ FACILITY_SHORT = [tuple(p) for p in _L.get('facility_short', [])]
 PLACE_NAMES = _L.get('place_names', {})
 # more over-the-counter drug names, and patterns (like a strength) that make one a prescription
 OTC = _L.get('otc', {})
+CONDITION_NAMES = _L.get('condition_names', {})   # this person's own condition wordings
 
 # Folder for each document category in the organized copy
 CATEGORY_FOLDERS = {

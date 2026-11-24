@@ -6,6 +6,7 @@ and either files it or flags it with questions for a person (status "done").
 """
 
 import hashlib
+import json
 import os
 import queue
 import re
@@ -34,6 +35,7 @@ def tools_missing(ext):
 
 
 def default_extract(path):
+    """Read an uploaded file with the tools on this machine (pdftotext, tesseract, ...)."""
     ext = os.path.splitext(path)[1].lower()
     if ext == '.html':
         from .extract import html_text
@@ -53,7 +55,10 @@ def safe_name(name):
 
 
 class Uploads:
+    """Files added from the dashboard or the browser plugin: checked, stored, read in a
+    background worker, sorted, and turned into entries. Also runs the one-time passes on startup."""
     def __init__(self, store, files_dir, extractor=None, recheck=60):
+        """Start the background worker and queue anything unfinished and any one-time passes due."""
         self.store, self.files_dir = store, files_dir
         self.extract = extractor or default_extract
         self.q = queue.Queue()
@@ -65,6 +70,19 @@ class Uploads:
             self.q.put(('resort', sha))
         for sha in store.placeholder_dates()[1]:          # read with 1/1/1900 taken as a real date
             self.q.put(('resort', sha))
+        from . import ccda
+        summaries = any(d.get('ext') in ('.xml', '.zip') for d in store.documents())
+        for job, key, version in (('meds', 'meds_version', MEDS_VERSION),            # one entry per drug per period
+                                  ('conditions', 'conditions_version', CONDITIONS_VERSION),  # one entry per condition
+                                  ('labnames', 'labnames_version', LABNAMES_VERSION),  # one name per lab test
+                                  ('places', 'places_version', PLACES_VERSION),        # departments saved as places
+                                  ('repage', 'page_version', ccda.PAGE_VERSION),       # pages drawn by an older page()
+                                  ('vaccines', 'vaccines_version', VACCINES_VERSION)):  # summaries read before vaccines
+            if store.get_setting(key) != version:
+                if summaries:
+                    self.q.put((job, None))
+                else:
+                    store.set_setting(key, version)   # nothing saved yet
         if recheck and not extractor:
             threading.Thread(target=self._recheck, args=(recheck,), daemon=True, name='uploads-recheck').start()
 
@@ -87,6 +105,8 @@ class Uploads:
         return True
 
     def add(self, name, data, source='dashboard'):
+        """Accept one uploaded file: check its type, store it under its sha256 and queue it for reading.
+        Returns {id, duplicate, title, status}."""
         name = safe_name(name)
         ext = os.path.splitext(name)[1].lower()
         if ext not in TYPES or (ext == '.html' and source not in ('plugin', 'export')):
@@ -114,8 +134,17 @@ class Uploads:
         return {'id': sha, 'duplicate': False, 'title': name, 'status': 'processing'}
 
     def _work(self):
+        """The background worker: reads queued files one at a time, and runs one-time passes."""
         while True:
             item = self.q.get()
+            if isinstance(item, tuple) and item[1] is None:   # a background job, not a file
+                try:
+                    {'repage': self.repage, 'vaccines': self.backfill_vaccines, 'places': self.fix_places,
+                     'labnames': self.tidy_lab_names, 'conditions': self.merge_conditions_once,
+                     'meds': self.merge_meds_once}[item[0]]()
+                except Exception:  # noqa: BLE001 - pages stay as they were; nothing else depends on it
+                    traceback.print_exc()
+                continue
             resort = isinstance(item, tuple)
             sha = item[1] if resort else item
             try:
@@ -126,7 +155,218 @@ class Uploads:
                 self.store.set_upload_result(sha, status='error', needs_review=True,
                                              review_note=f"Couldn't read this file: {e}")
 
+    def repage(self):
+        """Draw the readable pages of imported health summaries again when page() has changed.
+        Only the saved .html pages are rewritten; no entries are touched."""
+        from . import ccda
+        if self.store.get_setting('page_version') == ccda.PAGE_VERSION:
+            return 0
+        n = 0
+        for d in self.store.documents():
+            if d.get('ext') not in ('.xml', '.zip') or d.get('status') != 'done':
+                continue
+            try:
+                with open(os.path.join(self.files_dir, d['id'] + d['ext']), 'rb') as f:
+                    data = f.read()
+                docs = ccda.documents_in(data, d.get('orig_path') or '')
+            except (OSError, ccda.NotCCDA):
+                continue
+            for _name, xml in docs:
+                path = os.path.join(self.files_dir, hashlib.sha256(xml + b'#page').hexdigest() + '.html')
+                if not os.path.exists(path):
+                    continue
+                try:
+                    page = ccda.page(ccda.parse(xml))
+                except ccda.NotCCDA:
+                    continue
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(page)
+                n += 1
+        self.store.set_setting('page_version', ccda.PAGE_VERSION)
+        return n
+
+    def merge_meds_once(self):
+        """Medications saved before more drug names were known are merged once, the same way an
+        import merges them."""
+        from . import ccda
+        if self.store.get_setting('meds_version') == MEDS_VERSION:
+            return 0
+        self.store.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        n = self.store.merge_med_sources()
+        self.store.set_setting('meds_version', MEDS_VERSION)
+        return n
+
+    def merge_conditions_once(self):
+        """Conditions saved before more synonyms were known are merged once."""
+        if self.store.get_setting('conditions_version') == CONDITIONS_VERSION:
+            return 0
+        n = self.store.merge_conditions()
+        self.store.set_setting('conditions_version', CONDITIONS_VERSION)
+        return n
+
+    def tidy_lab_names(self):
+        """Results saved under names the current rules spell differently ("Hgb A1c.") get the standard
+        name, so one test is one trend; rows that are not results (an analyzer's serial number) are
+        removed, and the same result saved twice under two names is kept once. Hand-edited rows are
+        left alone."""
+        from . import parsers
+        if self.store.get_setting('labnames_version') == LABNAMES_VERSION:
+            return 0
+        db, n = self.store.db, 0
+        with self.store.lock:
+            # results read from uploaded PDFs: Labcorp's footnote letter was kept in the name
+            for (old,) in db.execute("SELECT DISTINCT analyte FROM labs WHERE edited=0 AND id LIKE 'lab-u%'").fetchall():
+                new = parsers.labcorp_name(old or '')
+                if old and new != old:
+                    n += db.execute("UPDATE labs SET analyte=? WHERE analyte=? AND edited=0 AND id LIKE 'lab-u%'",
+                                    (new, old)).rowcount
+            for (old,) in db.execute('SELECT DISTINCT analyte FROM labs WHERE edited=0').fetchall():
+                if not old:
+                    continue
+                if parsers.JUNK_ANALYTE.search(old):
+                    n += db.execute('DELETE FROM labs WHERE analyte=? AND edited=0', (old,)).rowcount
+                    continue
+                new = parsers.display_name(parsers.standard_name(old))
+                if new != old:
+                    n += db.execute('UPDATE labs SET analyte=? WHERE analyte=? AND edited=0', (new, old)).rowcount
+            # names that differ only in capitals are one test: use the most common spelling
+            spell = {}
+            for name, cnt in db.execute('SELECT analyte, COUNT(*) FROM labs GROUP BY analyte').fetchall():
+                if name:
+                    spell.setdefault(name.lower(), []).append((cnt, name))
+            for variants in spell.values():
+                if len(variants) > 1:
+                    canon = [v for v in variants if parsers.display_name(v[1]) == v[1]]
+                    best = max(canon or variants)[1]   # the standard spelling if there is one
+                    for _cnt, name in variants:
+                        if name != best:
+                            n += db.execute('UPDATE labs SET analyte=? WHERE analyte=? AND edited=0', (best, name)).rowcount
+            keep = {}
+            for rowid, analyte, date, value, docs, edited in db.execute(
+                    'SELECT rowid, analyte, date, COALESCE(CAST(num AS TEXT), value), docs, edited FROM labs '
+                    'ORDER BY edited DESC, rowid').fetchall():
+                k = (analyte, date, value)
+                if k not in keep:
+                    keep[k] = (rowid, json.loads(docs or '[]'))
+                    continue
+                if edited:
+                    continue
+                kid, kdocs = keep[k]
+                merged = list(dict.fromkeys(kdocs + json.loads(docs or '[]')))[:40]
+                db.execute('UPDATE labs SET docs=? WHERE rowid=?', (json.dumps(merged), kid))
+                keep[k] = (kid, merged)
+                n += db.execute('DELETE FROM labs WHERE rowid=?', (rowid,)).rowcount
+            db.commit()
+        self.store.set_setting('labnames_version', LABNAMES_VERSION)
+        return n
+
+    def fix_places(self):
+        """Summaries read by older versions saved a hospital department as the place ("Respiratory
+        Therapy Hospital"), and gave a procedure the place of whichever summary listed it, even one
+        about a visit years later. Puts the hospital's name on those visits and documents, and gives
+        each imported procedure the place of a visit on its date (or of the summary's own visit if it
+        happened then), or none. Entries a person edited are left alone."""
+        from . import ccda
+        if self.store.get_setting('places_version') == PLACES_VERSION:
+            return 0
+        n, db, visits = 0, self.store.db, {}
+        for d in self.store.documents():
+            if d.get('ext') not in ('.xml', '.zip') or d.get('status') != 'done':
+                continue
+            try:
+                with open(os.path.join(self.files_dir, d['id'] + d['ext']), 'rb') as f:
+                    found = ccda.documents_in(f.read(), d.get('orig_path') or '')
+            except (OSError, ccda.NotCCDA):
+                continue
+            for _name, xml in found:
+                try:
+                    doc = ccda.parse(xml)
+                except ccda.NotCCDA:
+                    continue
+                v = doc['visit']
+                pid = hashlib.sha256(xml + b'#page').hexdigest()
+                if not v:
+                    continue
+                visits[pid] = v
+                if v.get('department'):
+                    new = ccda.place(v.get('location'), v.get('facility'))
+                    with self.store.lock:
+                        n += db.execute("UPDATE encounters SET facility=? WHERE id LIKE 'ccda-%' AND edited=0 AND facility=? "
+                                        "AND docs LIKE ?", (new, v['department'], f'%{pid}%')).rowcount
+                        for did in (pid, d['id']):   # the readable page, and the uploaded file itself
+                            n += db.execute("UPDATE documents SET facility=? WHERE id=? AND person_edited=0 AND facility=?",
+                                            (doc['facility'], did, v['department'])).rowcount
+                        db.commit()
+        saved = [e for e in self.store.list('encounters') if e.get('date') and e.get('facility')]
+        for p in self.store.list('procedures'):
+            if not (p['id'] or '').startswith('ccda-') or p.get('edited') or len(p.get('date') or '') < 10:
+                continue   # undated history items: nothing to check them against
+            there = {e['facility'] for e in saved if ccda.during(p['date'], {'date': e['date'], 'end_date': e.get('end_date')})
+                     and p['date'][:10] >= e['date'][:10]}
+            cur = p.get('facility')
+            if not there or cur in there:
+                continue   # no visit then to check against, or it matches one
+            within = [t for t in there if cur and cur.lower() in t.lower()]
+            if not cur:
+                if len(there) > 1:
+                    continue
+                fix = there.pop()                     # no place yet: the one visit's place
+            elif len(within) == 1:
+                fix = within[0]                       # "Example Health Network" -> "Riverside Clinic / Example Health Network"
+            elif ccda.HOSPITAL.search(cur):
+                fix = there.pop() if len(there) == 1 else None   # a hospital no visit that day was at
+            else:
+                continue                              # can't tell: leave it
+            if fix != cur:
+                with self.store.lock:
+                    n += db.execute('UPDATE procedures SET facility=? WHERE id=? AND edited=0', (fix, p['id'])).rowcount
+                    db.commit()
+        self.store.set_setting('places_version', PLACES_VERSION)
+        return n
+
+    def backfill_vaccines(self):
+        """Read the vaccines out of health summaries that were loaded before vaccines were kept.
+        Only vaccine entries are added; nothing else is touched."""
+        from . import ccda, fhir
+        if self.store.get_setting('vaccines_version') == VACCINES_VERSION:
+            return 0
+        imms = {}
+        for d in self.store.documents():
+            if d.get('ext') not in ('.xml', '.zip') or d.get('status') != 'done':
+                continue
+            try:
+                with open(os.path.join(self.files_dir, d['id'] + d['ext']), 'rb') as f:
+                    data = f.read()
+                found = ccda.documents_in(data, d.get('orig_path') or '')
+            except (OSError, ccda.NotCCDA):
+                continue
+            for _name, xml in found:
+                try:
+                    doc = ccda.parse(xml)
+                except ccda.NotCCDA:
+                    continue
+                pid = hashlib.sha256(xml + b'#page').hexdigest()
+                for i in doc['immunizations']:
+                    collect_vaccine(imms, i, pid if self.store.document(pid) else d['id'])
+            for _name, js in ccda.zip_extras(data)['json']:
+                try:
+                    f = fhir.parse(js)
+                except fhir.NotFHIR:
+                    continue
+                pid = hashlib.sha256(js + b'#page').hexdigest()
+                for i in f.get('immunizations') or []:
+                    collect_vaccine(imms, i, pid if self.store.document(pid) else d['id'])
+        links = []
+        rows = vaccine_rows(self.store, imms, links)
+        for kind, rid, did in links:
+            self.store.link_doc(kind, rid, did)
+        n = self.store.upsert_imported('immunizations', rows)['added'] if rows else 0
+        self.store.set_setting('vaccines_version', VACCINES_VERSION)
+        return n
+
     def process(self, sha, reuse_text=False):
+        """Read one stored file: a health summary export is imported, anything else is read for text,
+        sorted and dated, with lab results taken from it."""
         d = self.store.document(sha)
         if not d:
             return
@@ -206,6 +446,7 @@ class Uploads:
         label = os.path.splitext(d.get('orig_path') or 'export')[0]
         invoices, queued = [], 0
         docs, enc, labs, meds, probs, alls, procs, links = [], [], [], {}, {}, {}, {}, []
+        imms = {}
         HOSPITAL = re.compile(r'inpatient|emergency|observation|admission|hospital', re.I)
         for xsha, name, doc in found:
             v = doc['visit']
@@ -271,8 +512,16 @@ class Uploads:
                 probs[p['name'].lower()] = dict(p, docs=[xsha])
             for a in doc['allergies']:
                 alls.setdefault(a['substance'].lower(), dict(a, docs=[xsha]))
+            for i in doc['immunizations']:
+                collect_vaccine(imms, i, xsha)
             for p in doc['procedures']:
-                procs.setdefault((p['name'].lower(), p.get('date')), dict(p, docs=[xsha], facility=doc['facility']))
+                # a summary lists past procedures too: its place only fits ones done during its visit
+                fac = doc['facility'] if ccda.during(p.get('date'), v) else None
+                k = (p['name'].lower(), p.get('date'))
+                if k not in procs:
+                    procs[k] = dict(p, docs=[xsha], facility=fac)
+                elif fac and not procs[k].get('facility'):
+                    procs[k]['facility'] = fac
         # a FHIR bundle (FollowMyHealth's AllPatientData.json): a summary page and a messages page
         for name, js, f in bundles:
             def page_doc(pid, title, page, category='other', date=None):
@@ -307,6 +556,8 @@ class Uploads:
                 probs.setdefault(p['name'].lower(), dict(p, docs=[spid]))
             for a in f['allergies']:
                 alls.setdefault(a['substance'].lower(), dict(a, docs=[spid]))
+            for i in f.get('immunizations') or []:
+                collect_vaccine(imms, i, spid)
             for p in f['procedures']:
                 procs.setdefault((p['name'].lower(), p.get('date')), dict(p, docs=[spid], facility=None))
             # scans: named by what the export says they are, with their date, then read like any upload
@@ -334,9 +585,13 @@ class Uploads:
             self.store.set_has_file(x['id'])
         # results: one name per test; skip values already recorded from other documents
         lab_rows = []
+        known = {a.lower(): a for a in self.store.lab_names()}
+        from .checks import learned_lab_names
+        learned = learned_lab_names(self.store)   # "same" answers on the Review tab
         for r in parsers.normalize(labs):
-            if r['analyte'].isupper():
-                r['analyte'] = r['analyte'].title()
+            r['analyte'] = parsers.display_name(r['analyte'])
+            r['analyte'] = learned.get(r['analyte'].lower(), r['analyte'])
+            r['analyte'] = known.get(r['analyte'].lower(), r['analyte'])
             r['id'] = ccda.record_ids('lab', r['analyte'], r['date'], r['value'])
             if self.store.get('labs', r['id']) or not self.store.lab_exists(r):
                 lab_rows.append(r)
@@ -404,13 +659,16 @@ class Uploads:
                 continue
             pid = ccda.record_ids('proc', p['name'], p.get('date'))
             proc_rows.append({'id': pid, 'docs': p['docs'],
-                              'date': p.get('date'), 'name': p['name'], 'facility': old_place.get(pid) or p.get('facility'),
+                              'date': p.get('date'), 'name': p['name'],
+                              'facility': p.get('facility') or visit_place(p.get('date'), enc, self.store) or old_place.get(pid),
                               'provider': p.get('provider')})
         for kind, rid, did in links:
             self.store.link_doc(kind, rid, did)
         counts = {}
+        vax_rows = vaccine_rows(self.store, imms, links)
         for kind, rows in (('encounters', enc), ('labs', lab_rows), ('medications', med_rows),
-                           ('conditions', cond_rows), ('allergies', all_rows), ('procedures', proc_rows)):
+                           ('conditions', cond_rows), ('allergies', all_rows), ('procedures', proc_rows),
+                           ('immunizations', vax_rows)):
             if rows:
                 counts[kind] = self.store.upsert_imported(kind, rows)
         merged = self.store.consolidate_meds(ccda.drug_key, ccda.record_ids)
@@ -428,7 +686,7 @@ class Uploads:
         summary = (f"Imported {len(docs)} documents ({span}): {added.get('encounters', 0)} visits, "
                    f"{added.get('labs', 0)} results and vital signs, medications now {added.get('medications', 0)} entries (one per drug per period of use), "
                    f"{added.get('conditions', 0)} problems, {added.get('allergies', 0)} allergies, "
-                   f"{added.get('procedures', 0)} procedures."
+                   f"{added.get('procedures', 0)} procedures, {added.get('immunizations', 0)} vaccines."
                    + (f" Linked to {len(links)} entr{'y' if len(links) == 1 else 'ies'} already on the dashboard." if links else '')
                    + (f" {queued} scans and other documents added to be read separately." if queued else '')
                    + (f" {bad} file(s) could not be read." if bad else '')
@@ -456,6 +714,77 @@ class Uploads:
 
     def uploaded(self):
         return [d for d in self.store.documents() if (d.get('path') or '').startswith(UPLOAD_DIR + '/')]
+
+
+MEDS_VERSION = '1'        # bump when drug names are matched differently
+CONDITIONS_VERSION = '2'  # bump when condition synonyms change
+LABNAMES_VERSION = '4'  # bump when lab names are standardized differently
+PLACES_VERSION = '5'     # bump when places are read differently, so saved ones are fixed again
+
+
+def visit_place(date, enc, store, saved=None):
+    """The place of a visit on that day (new visits of this import first, then saved ones)."""
+    if not date or len(date) < 10:
+        return None
+    for e in list(enc) + (saved if saved is not None else store.list('encounters')):
+        if (e.get('date') or '')[:10] == date[:10] and e.get('facility'):
+            return e['facility']
+    return None
+
+
+VACCINES_VERSION = '1'   # bump when vaccines are read differently, so summaries are read again
+
+
+def collect_vaccine(imms, i, did):
+    """One shot per vaccine per day, however many documents list it; details are filled in from
+    whichever document has them."""
+    key = (i['vaccine'].lower(), i['date'][:10])
+    cur = imms.get(key)
+    if not cur:
+        imms[key] = dict(i, date=i['date'][:10], docs=[did])
+        return
+    if did not in cur['docs']:
+        cur['docs'].append(did)
+    for f in ('lot', 'manufacturer', 'provider', 'facility'):
+        cur[f] = cur.get(f) or i.get(f)
+    if len(i.get('product') or '') > len(cur.get('product') or ''):
+        cur['product'] = i['product']
+
+
+def vaccine_rows(store, imms, links):
+    """Rows to import; a shot already entered by hand on the same day only gets the documents linked."""
+    from . import ccda
+    old = {r['id']: r for r in store.list('immunizations')}
+    by_hand = {(r['date'] or '')[:10] + '|' + (r['name'] or '').lower(): r['id'] for r in old.values()
+               if not (r['id'] or '').startswith('ccda-')}
+    # the same shot recorded by two systems a day apart, one without a lot number: keep one
+    import datetime
+    for key in sorted(imms, key=lambda k: k[1]):
+        i = imms.get(key)
+        if not i or i.get('lot'):
+            continue
+        day = datetime.date.fromisoformat(key[1])
+        for k2 in [(key[0], str(day + datetime.timedelta(days=n))) for n in (-1, 1)]:
+            j = imms.get(k2)
+            if j and j.get('lot'):
+                j['docs'] = list(dict.fromkeys(j['docs'] + i['docs']))
+                del imms[key]
+                break
+    rows = []
+    for (group, day), i in sorted(imms.items(), key=lambda x: x[0][1]):
+        name = f"{i['vaccine']} vaccine"
+        twin = by_hand.get(day + '|' + name.lower())
+        if twin:
+            links.extend(('immunizations', twin, d) for d in i['docs'])
+            continue
+        rid = ccda.record_ids('imm', group, day)
+        prev = old.get(rid) or {}
+        rows.append({'id': rid, 'docs': list(dict.fromkeys((prev.get('docs') or []) + i['docs']))[:40],
+                     'date': day, 'name': name, 'product': i.get('product'), 'lot': i.get('lot') or prev.get('lot'),
+                     'manufacturer': i.get('manufacturer') or prev.get('manufacturer'),
+                     'facility': i.get('facility') or prev.get('facility'),
+                     'provider': i.get('provider') or prev.get('provider')})
+    return rows
 
 
 def refresh_doctors(store, write=True):

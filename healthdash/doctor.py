@@ -119,6 +119,7 @@ def upload_status():
 
 
 def main(role='server'):
+    """Print which tools this machine has for reading files; exit 1 if a required one is missing."""
     rows = checks(role)
     bad = False
     for name, ok, required, detail in rows:

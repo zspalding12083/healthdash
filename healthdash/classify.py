@@ -223,6 +223,7 @@ def guess_date(text, filename=''):
 
 
 def score_categories(text):
+    """How strongly a text looks like each kind of document (keyword hits per category)."""
     low = ' ' + re.sub(r'\s+', ' ', text.lower()) + ' '
     scores = {}
     for cat, words in KEYWORDS.items():
@@ -375,6 +376,7 @@ community physicians specialists clinic network system street avenue road dental
 
 
 def guess_title(text, category, filename):
+    """A short title for a document: its own title line if it has one, else from its kind and file name."""
     m = TITLE_LINE.search(text)
     if m:
         t = re.sub(r'\s{2,}.*$', '', m.group(2)).strip(' .:-')
@@ -421,6 +423,7 @@ class Filed:
     """What we can learn from documents that are already filed: [(facility, category, text)]."""
 
     def __init__(self, docs):
+        """Learn which lines repeat across many documents (headers, footers) so they can be ignored."""
         self.docs = [(f if f and looks_like_place(f) else None, c, _lines(t or '')) for f, c, t in docs]
         df = {}
         for _, _, ls in self.docs:

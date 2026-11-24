@@ -58,6 +58,8 @@ def _token_hash(token):
 
 
 class Auth:
+    """Sign-in accounts, browser sessions and plugin keys, stored in the dashboard database.
+    Passwords and keys are kept only as salted hashes."""
     def __init__(self, store):
         self.store = store
         self.db = store.db
@@ -85,6 +87,7 @@ class Auth:
         return username
 
     def add_user(self, username, password):
+        """Create an account; the name is lower-cased. Raises ValidationError if it exists or is too weak."""
         username = self._check(username, password)
         try:
             with self.store.lock:
@@ -96,6 +99,7 @@ class Auth:
         return username
 
     def set_password(self, username, password):
+        """Change a password and sign that account out everywhere."""
         username = self._check(username, password)
         with self.store.lock:
             n = self.db.execute('UPDATE users SET password=? WHERE username=?',
@@ -106,6 +110,7 @@ class Auth:
             raise ValidationError(f'no user {username}')
 
     def remove_user(self, username):
+        """Delete an account and its sessions and keys; the last account cannot be removed."""
         username = (username or '').lower()
         with self.store.lock:
             if self.count() <= 1:
@@ -186,6 +191,7 @@ class Auth:
         return n > 0
 
     def key_user(self, key):
+        """The account a plugin key belongs to (and note when it was last used), or None."""
         if not key or not key.startswith(KEY_PREFIX):
             return None
         row = self.db.execute('SELECT k.id, k.username FROM api_keys k JOIN users u ON u.username=k.username '

@@ -75,6 +75,8 @@ def _link_tree(src, dst):
 
 
 def organize(source, dest, apply=False, log=print):
+    """Copy the records folder into `dest` sorted into numbered folders with dated names
+    (only a plan unless apply=True). The source is never changed."""
     if os.path.realpath(source) == os.path.realpath(dest):
         log('The records folder is already the sorted copy; nothing to organize.')
         return []

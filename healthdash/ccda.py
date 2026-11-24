@@ -6,6 +6,7 @@ entries (results and vital signs, medications, problems, allergies). Python stan
 only; documents with a DOCTYPE or entity declarations are refused.
 """
 
+import datetime
 import hashlib
 import html
 import io
@@ -19,8 +20,45 @@ MAX_MEMBERS, MAX_XML = 2000, 50 * 1024 * 1024
 SECTIONS = {  # LOINC section code -> what it is
     '30954-2': 'results', '8716-3': 'vitals', '10160-0': 'medications', '11450-4': 'problems',
     '11348-0': 'resolved', '48765-2': 'allergies', '46240-8': 'encounters', '29299-5': 'reason',
-    '51848-0': 'diagnoses', '10164-2': 'notes', '47519-4': 'procedures',
+    '51848-0': 'diagnoses', '10164-2': 'notes', '47519-4': 'procedures', '11369-6': 'immunizations',
 }
+# Sections that describe the person as of the day the file was exported, not the visit: portals put
+# the current plan and upcoming appointments into every summary, even one about a visit years ago.
+PLAN_CODES = {'18776-5'}
+PLAN_TITLE = re.compile(r'\b(plan of (care|treatment)|treatment plan|care plan|future|upcoming|appointments?)\b', re.I)
+PAGE_VERSION = '3'   # bump when page() changes, so pages already saved are drawn again
+CVX = '2.16.840.1.113883.12.292'   # the CDC's vaccine codes
+COVID_CVX = {'207', '208', '210', '211', '212', '213', '217', '218', '219', '221', '225', '226', '227', '228',
+             '229', '230', '300', '301', '302', '308', '309', '310', '311', '312', '313'}
+VACCINES = [   # (pattern on the product name, the vaccine it is): the first match wins
+    (r'covid|sars-?cov-?2|comirnaty|spikevax|novavax|mnexspike', 'COVID-19'),
+    (r'influenza|\bflu|fluzone|flucelvax|fluarix|fluad|flublok|afluria|fluvirin|fluvax', 'Flu'),
+    (r'hepatitis a\b.*hepatitis b|twinrix', 'Hepatitis A and B'),
+    (r'hepatitis b|hep ?b\b|heplisav|engerix|recombivax', 'Hepatitis B'),
+    (r'hepatitis a|hep ?a\b|havrix|vaqta', 'Hepatitis A'),
+    (r'pneumo|\bpcv|\bppsv|prevnar|vaxneuvance|capvaxive', 'Pneumococcal'),
+    (r'zoster|shingrix|shingles', 'Shingles'),
+    (r'\brsv\b|respiratory syncytial|arexvy|abrysvo|mresvia', 'RSV'),
+    (r'tdap|\btd\b|tetanus|diphtheria|boostrix|adacel|tenivac', 'Tetanus (Tdap/Td)'),
+    (r'\bhpv\b|papilloma|gardasil', 'HPV'),
+    (r'\bmmr|measles|mumps|rubella', 'MMR'),
+    (r'varicella|varivax|chickenpox', 'Chickenpox'),
+    (r'mening|menactra|menveo|bexsero|trumenba|menquadfi|penbraya', 'Meningococcal'),
+    (r'polio|\bipv\b', 'Polio'),
+    (r'typhoid', 'Typhoid'), (r'rabies', 'Rabies'), (r'yellow fever', 'Yellow fever'),
+]
+
+
+def vaccine_group(name, cvx=None):
+    """What a vaccine product is for, in plain words: "Moderna 12+ ... SARS-COV-2 (COVID-19) ..." -> "COVID-19"."""
+    if cvx in COVID_CVX:
+        return 'COVID-19'
+    for pat, group in VACCINES:
+        if re.search(pat, name or '', re.I):
+            return group
+    return re.sub(r'\s+', ' ', name or '').strip()[:80] or 'Vaccine'
+
+
 FLAGS = {'H': 'H', 'HH': 'H', 'HU': 'H', 'L': 'L', 'LL': 'L', 'LU': 'L', 'A': 'A', 'AA': 'A', 'C': 'C'}
 
 
@@ -133,6 +171,7 @@ def parse(data):
         return ids.get((r.get('value') or '').lstrip('#'), '') if r is not None else ''
 
     def when(el):
+        """The date an element happened (its effectiveTime value or low), as YYYY-MM-DD."""
         if el is None:
             return None
         et = el.find(N + 'effectiveTime')
@@ -144,7 +183,7 @@ def parse(data):
         return _date(lo.get('value')) if lo is not None else None
 
     out = {'title': _t(root.find(N + 'title')) or 'Health summary', 'labs': [], 'medications': [],
-           'problems': [], 'allergies': [], 'procedures': [], 'sections': []}
+           'problems': [], 'allergies': [], 'procedures': [], 'immunizations': [], 'sections': []}
     eff = root.find(N + 'effectiveTime')
     out['doc_date'] = _date(eff.get('value')) if eff is not None else None
     cust = root.find(f'.//{N}custodian//{N}representedCustodianOrganization/{N}name')
@@ -168,6 +207,15 @@ def parse(data):
             'location': _t(loc) or None,
             'provider': ' '.join(_t(p) for p in who) if who is not None else None,
         }
+        # A hospital department named as the place ("Respiratory Therapy Hospital", "Minor OR") at the
+        # hospital's own address: the place is the hospital that issued the file.
+        dept = _t(loc)
+        cust_org = root.find(f'{N}custodian//{N}representedCustodianOrganization')
+        hosp = _t(cust_org.find(N + 'name')) if cust_org is not None else ''
+        if (not _t(org) and dept and hosp and dept.lower() != hosp.lower() and HOSPITAL.search(hosp)
+                and DEPARTMENT.search(dept) and _same_address(enc.find(f'.//{N}location//{N}location/{N}addr'),
+                                                              cust_org.find(N + 'addr'))):
+            out['visit'].update(facility=hosp, location=None, department=dept)
         out['facility'] = out['visit']['facility'] or out['facility']
         if not out['visit']['date'] and not out['visit']['end_date']:
             out['visit'] = None   # a summary of the whole history, not of one visit
@@ -178,6 +226,8 @@ def parse(data):
         title = _t(sec.find(N + 'title'))
         narrative = sec.find(N + 'text')
         out['sections'].append((title, narrative))
+        if (code is not None and code.get('code') in PLAN_CODES) or PLAN_TITLE.search(title or ''):
+            out.setdefault('as_of_export', []).append(title)
         if kind in ('results', 'vitals'):
             for org in sec.iter(N + 'organizer'):
                 panel = ref(org.find(N + 'code')) or None
@@ -239,6 +289,28 @@ def parse(data):
                 name = re.sub(r'\s+\d{1,2}$', '', name).strip(' ,;')     # table footnote numbers
                 out['procedures'].append({'name': name, 'date': date,
                                           'provider': _t(who) or None})
+        elif kind == 'immunizations':
+            for sa in sec.iter(N + 'substanceAdministration'):
+                if sa.get('negationInd') == 'true' or sa.get('moodCode', 'EVN') != 'EVN':
+                    continue   # refused, or only planned
+                st = sa.find(N + 'statusCode')
+                if st is not None and st.get('code') in ('cancelled', 'aborted', 'nullified'):
+                    continue
+                mat = sa.find(f'.//{N}manufacturedMaterial')
+                code = mat.find(N + 'code') if mat is not None else None
+                name = (ref(code) if code is not None else '') or \
+                       (_t(mat.find(N + 'name')) if mat is not None else '') or textref(sa)
+                date = when(sa)
+                if not name or not date:
+                    continue
+                cvx = code.get('code') if code is not None and code.get('codeSystem') == CVX else None
+                who = sa.find(f'.//{N}performer//{N}assignedPerson/{N}name')
+                org = sa.find(f'.//{N}performer//{N}representedOrganization/{N}name')
+                out['immunizations'].append({
+                    'vaccine': vaccine_group(name, cvx), 'product': name.strip(), 'date': date,
+                    'lot': _t(mat.find(N + 'lotNumberText')) or None if mat is not None else None,
+                    'manufacturer': _t(sa.find(f'.//{N}manufacturerOrganization/{N}name')) or None,
+                    'provider': _t(who) or None, 'facility': _t(org) or None})
         elif kind == 'allergies':
             for act in sec.iterfind(f'{N}entry/{N}act'):
                 obs = act.find(f'.//{N}observation')
@@ -285,6 +357,8 @@ def parse(data):
 
 
 def _observation(obs, ref, when, odate, panel):
+    """One result or vital sign from a C-CDA observation -> {date, panel, analyte, value, num, unit,
+    ref_range, flag}, or None for rows that are not results."""
     v = obs.find(N + 'value')
     if v is None or v.get('nullFlavor'):
         return None
@@ -327,17 +401,34 @@ def _observation(obs, ref, when, odate, panel):
             'ref_range': ref_range, 'flag': flag}
 
 
+def _day(d):
+    try:
+        return datetime.date.fromisoformat((d or '')[:10])
+    except ValueError:
+        return None
+
+
+def _nice(day):
+    return f'{day.day} {day:%b %Y}'
+
+
 def page(doc):
     """A readable HTML page of a document's narrative (shown and searched on the dashboard)."""
     parts = [f'<h1>{html.escape(doc["title"])}</h1>']
     v = doc.get('visit')
     if v:
-        bits = [v.get('kind'), v.get('date'), v.get('facility'), v.get('location'), v.get('provider')]
+        bits = [v.get('kind'), v.get('date'), v.get('facility'), v.get('department') or v.get('location'), v.get('provider')]
         parts.append('<p>' + ' · '.join(html.escape(b) for b in bits if b) + '</p>')
+    made, seen = _day(doc.get('doc_date')), _day(v and (v.get('end_date') or v.get('date')))
+    later = made and seen and (made - seen).days > 7   # exported well after the visit
     for title, nar in doc['sections']:
         if nar is None or not _t(nar):
             continue
-        parts.append(f'<h2>{html.escape(title)}</h2>' + _narrative_html(nar))
+        note = ''
+        if later and title in doc.get('as_of_export', ()):
+            note = (f'<p><em>As of {_nice(made)}, when this summary was exported, not the visit on '
+                    f'{_nice(seen)}. Appointments and plans here are from that export.</em></p>')
+        parts.append(f'<h2>{html.escape(title)}</h2>' + note + _narrative_html(nar))
     return ('<!doctype html><html><head><meta charset="utf-8"><title>' + html.escape(doc['title']) +
             '</title></head><body>' + '\n'.join(parts) + '</body></html>')
 
@@ -349,6 +440,7 @@ _KEEP = {'table': 'table', 'thead': 'thead', 'tbody': 'tbody', 'tr': 'tr', 'td':
 def _narrative_html(el):
     """C-CDA narrative block -> plain safe HTML (only structural tags, text escaped)."""
     def walk(e):
+        """Copy one narrative element as safe HTML: known structural tags kept, all text escaped."""
         tag = e.tag.replace(N, '')
         out = html.escape(e.text or '')
         for c in e:
@@ -417,11 +509,36 @@ _FORM_WORDS = set('oral tablet tablets tab tabs capsule capsules caps cap soluti
                   'suppository tromethamine succinate tartrate potassium calcium besylate maleate mesylate'.split())
 
 
+# Brand names and abbreviations that mean one generic drug (or combination), so lines written
+# either way are one drug even when no line says "generic (Brand)".
+DRUG_NAMES = {
+    'apap': 'acetaminophen', 'tylenol': 'acetaminophen', 'paracetamol': 'acetaminophen',
+    'proair': 'albuterol', 'ventolin': 'albuterol', 'proventil': 'albuterol', 'salbutamol': 'albuterol',
+    'augmentin': 'amoxicillin-clavulanate', 'amoxicillin-pot': 'amoxicillin-clavulanate',
+    'macrobid': 'nitrofurantoin', 'macrodantin': 'nitrofurantoin', 'diprivan': 'propofol',
+    'flexeril': 'cyclobenzaprine', 'fioricet': 'acetaminophen-butalbital-caffeine',
+    'percocet': 'acetaminophen-oxycodone', 'norco': 'acetaminophen-hydrocodone', 'vicodin': 'acetaminophen-hydrocodone',
+    'multiple': 'multivitamin', 'multivitamins': 'multivitamin',
+}
+
+
 def drug_key(name):
-    """The drug a medication line is about ("EXAMPLOL HCl 2 MG Oral Tablet" -> "examplol")."""
+    """The drug a medication line is about ("EXAMPLOL HCl 2 MG Oral Tablet" -> "examplol"). A
+    combination written with slashes ("acetaminophen 325 MG / butalbital 50 MG / caffeine") is
+    named by all its drugs, and a known brand or abbreviation by its generic."""
     n = re.sub(r'\(.*?\)', ' ', (name or '').lower())
+    n = re.sub(r'(\d|\b(mcg|mg|ml|g|unt|units?|meq|iu))\s*/\s*\d*\.?\d*\s*(act|actuat|ml|dose|dos|inh|hr|h|l|kg|spray|day)\b', ' ', n)   # units: MCG/ACT, mg/mL
+    parts = [p for p in re.split(r'\s*/\s*', n) if p.strip()]
+    if len(parts) > 1 and all(re.search(r'[a-z]{3,}', p) for p in parts):
+        keys = [_one_drug(p) for p in parts]
+        if all(keys) and not any(re.match(r'^\d', k) for k in keys):
+            return '-'.join(keys)
+    return _one_drug(n) or n.strip()[:20]
+
+
+def _one_drug(n):
     words = [w for w in re.findall(r'[a-z][a-z-]{2,}', n) if w not in _FORM_WORDS]
-    return words[0] if words else n.strip()[:20]
+    return DRUG_NAMES.get(words[0], words[0]) if words else ''
 
 
 _CREDENTIALS = {'md', 'do', 'pa', 'pac', 'np', 'fnp', 'aprn', 'rn', 'dpm', 'dds', 'dmd', 'od', 'phd', 'facs', 'facp',
@@ -475,6 +592,39 @@ def doctor_key(name):
     if len(words) < 2 or not re.search(r'[a-z]', name or ''):
         return None   # "MD ER", a department, a lone surname
     return f'{words[0]} {words[-1]}'
+
+
+HOSPITAL = re.compile(r'hospital|medical cent(er|re)', re.I)
+# how hospital systems name a department as if it were a place: "Sleep Lab Hospital", "Minor OR"
+DEPARTMENT = re.compile(r'\bhospital$|^(minor |main |ambulatory )?or$|operating room|\bpacu\b|endoscopy|'
+                        r'^(emergency|radiology|imaging|respiratory|sleep|cardio(pulmonary)? rehab|infusion|wound)\b', re.I)
+
+
+def _same_address(a, b):
+    """The same building: same street number and city (suites ignored)."""
+    def key(x):
+        if x is None:
+            return None
+        street = ' '.join(_t(e) for e in x.iterfind(N + 'streetAddressLine'))
+        num = re.match(r'\s*(\d+)', street)
+        city = _t(x.find(N + 'city')).lower()
+        return (num.group(1), city) if num and city else None
+    ka, kb = key(a), key(b)
+    return bool(ka) and ka == kb
+
+
+def during(date, visit):
+    """Did something dated `date` happen during this visit (its day, or its stay plus a day)?"""
+    if not date or not visit or not visit.get('date'):
+        return False
+    d, start, end = date[:10], visit['date'][:10], (visit.get('end_date') or visit['date'])[:10]
+    if len(d) < 10:
+        return start.startswith(d)
+    try:
+        import datetime
+        return start <= d <= str(datetime.date.fromisoformat(end) + datetime.timedelta(days=1))
+    except ValueError:
+        return start <= d <= end
 
 
 def place(*parts):

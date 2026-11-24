@@ -18,11 +18,14 @@ MAIN = 'main'
 
 class Person:
     def __init__(self, pid, name, store, files_dir, uploads):
+        """One person: their id, shown name, store, files folder and upload worker."""
         self.id, self.name, self.store, self.files_dir, self.uploads = pid, name, store, files_dir, uploads
 
 
 class People:
+    """Everyone on one dashboard: each person's store, files and upload worker, by id."""
     def __init__(self, store, files_dir, uploads, state_dir=None, make_uploads=None, main_name='Main'):
+        """Open the main person (the original database) and everyone listed in its people table."""
         self.home = store
         self.state = state_dir
         self.make_uploads = make_uploads
@@ -57,6 +60,7 @@ class People:
         return [{'id': p.id, 'name': p.name} for p in self.by_id.values()]
 
     def add(self, name):
+        """Add a person with their own database and files folder; returns {id, name}."""
         name = (name or '').strip()
         if not name or len(name) > 60:
             raise ValidationError('give the person a name (up to 60 characters)')
@@ -75,6 +79,7 @@ class People:
         return {'id': pid, 'name': name}
 
     def rename(self, pid, name):
+        """Change a person's shown name."""
         name = (name or '').strip()
         if not name or len(name) > 60:
             raise ValidationError('give the person a name (up to 60 characters)')

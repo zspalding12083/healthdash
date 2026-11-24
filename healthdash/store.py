@@ -28,6 +28,7 @@ KINDS = {
     'conditions': ['name', 'status', 'first_noted', 'notes'],
     'allergies': ['substance', 'reaction', 'severity'],
     'imaging': ['date', 'modality', 'description', 'facility', 'location', 'notes'],
+    'immunizations': ['date', 'name', 'product', 'lot', 'manufacturer', 'facility', 'provider', 'notes'],
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
 }
 NUMERIC = {'num'}
@@ -41,6 +42,35 @@ DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
                        'person_edited INTEGER DEFAULT 0']}  # columns added after the first release
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
+
+
+# The same condition as different clinics word it: shown under the first name unless a person
+# entered it by hand (then the hand-made entry and its wording stay). Only general synonyms here; a
+# person's own wordings come from their settings (local.json "condition_names", sent with an import)
+# and from "same" answers on the Review tab. A more specific diagnosis (major depressive disorder,
+# chronic kidney disease) stays its own entry.
+CONDITION_NAMES = {
+    'High blood pressure (hypertension)': ['high blood pressure', 'hypertension', 'htn (hypertension)', 'htn',
+                                           'essential hypertension', 'hypertension, unspecified type'],
+    'High cholesterol (hyperlipidemia)': ['high cholesterol', 'elevated cholesterol', 'high cholesterol or triglycerides',
+                                          'hyperlipidemia', 'high cholesterol (hyperlipidemia)', 'pure hypercholesterolemia'],
+    'Obstructive sleep apnea (OSA)': ['sleep apnea', 'osa (obstructive sleep apnea)', 'obstructive sleep apnea', 'osa'],
+    'Type 2 diabetes': ['type 2 diabetes', 'diabetes mellitus', 'type 2 diabetes mellitus',
+                        'type 2 diabetes mellitus without complication, without long-term current use of insulin',
+                        'type 2 diabetes mellitus with hyperglycemia, without long-term current use of insulin',
+                        'dm2', 't2dm'],
+    'Anxiety': ['anxiety', 'anxiety disorder', 'anxiety state'],
+    'Depression': ['depression', 'depression nos', 'depressive disorder'],
+    'Migraine': ['migraine', 'migraines', 'history of migraine', 'migraine headache'],
+    'Irritable bowel syndrome': ['irritable bowel syndrome', 'irritable colon', 'ibs'],
+    'Obesity': ['obesity', 'class 3 obesity'],
+}
+_CONDITION_KEY = {alias: std for std, aliases in CONDITION_NAMES.items() for alias in aliases}
+
+
+def condition_name(name):
+    """The shared name of a condition, or None if it has no synonyms listed."""
+    return _CONDITION_KEY.get(re.sub(r'\s+', ' ', (name or '').strip().lower()))
 
 
 def _combo(k):
@@ -64,6 +94,7 @@ def now():
 
 
 def _schema():
+    """The SQL that creates every table (documents, its search index, one table per kind)."""
     sql = ["""
     CREATE TABLE IF NOT EXISTS documents (
         id TEXT PRIMARY KEY,            -- sha256 of the file
@@ -115,6 +146,7 @@ class _Result:
     """A finished query: rows are fetched while the lock is held."""
 
     def __init__(self, cur):
+        """Fetch every row now, while the lock is held."""
         self.rows = cur.fetchall()
         self.rowcount, self.lastrowid = cur.rowcount, cur.lastrowid
 
@@ -133,6 +165,7 @@ class _LockedDB:
     the store's lock, so two threads never use the connection at the same time."""
 
     def __init__(self, conn, lock):
+        """Wrap a connection; every call goes through the shared lock."""
         object.__setattr__(self, '_conn', conn)
         object.__setattr__(self, '_lock', lock)
 
@@ -196,7 +229,10 @@ def is_otc(name, extra=None):
 
 
 class Store:
+    """The dashboard database: documents, the records of each kind, settings, and the passes that
+    keep imported records tidy (one entry per drug period, per condition, per place spelling)."""
     def __init__(self, path):
+        """Open (or create) the database and bring an older one up to date."""
         self.path = path
         self.lock = threading.RLock()
         self.db = _LockedDB(sqlite3.connect(path, check_same_thread=False), self.lock)
@@ -207,6 +243,7 @@ class Store:
         self._drop_old_columns()
 
     def _drop_old_columns(self):
+        """Add columns introduced after the first release, and drop removed ones and tables."""
         for table, cols in ADDED.items():
             have = {r[1] for r in self.db.execute(f'PRAGMA table_info({table})')}
             for c in cols:
@@ -241,6 +278,7 @@ class Store:
 
     @staticmethod
     def _clean_record(kind, data, partial=False):
+        """Check and convert a record's fields for its kind (dates, numbers); partial for updates."""
         if kind not in KINDS:
             raise ValidationError(f'unknown kind: {kind}')
         out = {}
@@ -282,6 +320,7 @@ class Store:
     # ---- records ------------------------------------------------------------------------
 
     def list(self, kind):
+        """Every entry of a kind, in the order the dashboard shows them."""
         if kind not in KINDS:
             raise ValidationError(f'unknown kind: {kind}')
         order = {'medications': 'COALESCE(end_date, "9999") DESC, start_date DESC, name',
@@ -327,6 +366,7 @@ class Store:
         return self._decode(dict(r)) if r else None
 
     def create(self, kind, data):
+        """Add an entry by hand (it counts as a person's edit, so imports never overwrite it)."""
         rec = self._clean_record(kind, data)
         rid = str(data.get('id') or f'{kind[:3]}-{datetime.now().strftime("%Y%m%d%H%M%S%f")}')
         rec.update(id=rid, origin='manual', edited=1, updated=now())
@@ -339,6 +379,7 @@ class Store:
         return self.get(kind, rid)
 
     def update(self, kind, rid, data):
+        """Change an entry; marks it edited, so a later import leaves it alone."""
         if not self.get(kind, rid):
             return None
         rec = self._clean_record(kind, data, partial=True)
@@ -392,6 +433,7 @@ class Store:
     # ---- documents ----------------------------------------------------------------------
 
     def upsert_documents(self, docs):
+        """Add or update documents by id; hand-edited details are kept, deleted ones stay deleted."""
         moved = self.moved_ids('documents')
         docs = [d for d in docs if str(d.get('id')) not in moved]
         added = updated = 0
@@ -442,6 +484,7 @@ class Store:
         return r
 
     def update_document(self, did, data):
+        """Change a document's details from the dashboard (title, date, kind, place, summary)."""
         allowed = {'title', 'doc_date', 'category', 'facility', 'summary', 'needs_review', 'review_note'}
         vals = {k: v for k, v in data.items() if k in allowed}
         if 'doc_date' in vals and vals['doc_date'] and not DATE_RE.match(vals['doc_date']):
@@ -763,7 +806,33 @@ class Store:
             self.db.commit()
         object.__setattr__(self, '_otc', None)
 
+    def set_condition_names(self, names):
+        """{"Shown name": ["other wording", ...]}: a person's own condition wordings, added to the
+        general list. Replaces the earlier setting."""
+        if not isinstance(names, dict):
+            raise ValidationError('condition names must be {name: [other wordings]}')
+        flat = {str(o).strip().lower(): str(n).strip() for n, others in names.items()
+                for o in (others if isinstance(others, list) else [others])}
+        self.set_setting('condition_names', json.dumps(flat))
+
+    def lab_names(self):
+        with self.lock:
+            return [r[0] for r in self.db.execute('SELECT DISTINCT analyte FROM labs') if r[0]]
+
+    def get_setting(self, key):
+        with self.lock:
+            self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
+            row = self.db.execute('SELECT value FROM setting WHERE key=?', (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key, value):
+        with self.lock:
+            self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
+            self.db.execute('INSERT OR REPLACE INTO setting VALUES (?, ?)', (key, value))
+            self.db.commit()
+
     def is_otc(self, name):
+        """Is this an over-the-counter medicine (by the built-in words and the configured ones)?"""
         if getattr(self, '_otc', None) is None:
             self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
             row = self.db.execute("SELECT value FROM setting WHERE key='otc'").fetchone()
@@ -809,6 +878,7 @@ class Store:
         today = D.today()
 
         def span(r):
+            """The dates an entry covers; an open-ended one runs to today."""
             def d(v, end=False):
                 v = v or ''
                 try:
@@ -851,9 +921,14 @@ class Store:
             n = re.sub(r'\s+\d+\s*$', '', n)
             n = re.sub(r'^\s*hx\.? of\b', 'History of', n, flags=re.I)
             return re.sub(r'\s+', ' ', n).strip(' ,.-')
+        from .checks import learned_condition_names
+        learned = dict(json.loads(self.get_setting('condition_names') or '{}'))   # this person's own wordings
+        learned.update(learned_condition_names(self))                              # "same" answers on the Review tab
         groups = {}
         for c in self.list('conditions'):
-            groups.setdefault(clean(c['name']).lower(), []).append(c)
+            std = (condition_name(clean(c['name'])) or condition_name(c['name'])
+                   or learned.get(c['name'].strip().lower()) or learned.get(clean(c['name']).lower()))
+            groups.setdefault((std or clean(c['name'])).lower(), []).append(c)
         merged = 0
         for k, rows in groups.items():
             if not k:
@@ -863,7 +938,7 @@ class Store:
             dates = [r['first_noted'] for r in rows if r['first_noted'] and r['first_noted'][:4] >= '1910']
             vals = {}
             if not mine:
-                vals['name'] = clean(keep['name'])
+                vals['name'] = condition_name(clean(keep['name'])) or clean(keep['name'])
                 vals['status'] = 'active' if any(r['status'] == 'active' for r in rows) else keep['status']
             if dates and min(dates) != keep['first_noted'] and not keep.get('edited'):
                 vals['first_noted'] = min(dates)
@@ -1157,6 +1232,8 @@ class Store:
         for r in self.list('imaging'):
             add('imaging', r['id'], r['date'], f"{r['modality'] or ''} {r['description'] or ''}".strip(),
                 r['notes'], r['facility'], None, r['docs'])
+        for r in self.list('immunizations'):
+            add('immunizations', r['id'], r['date'], r['name'], r['product'], r['facility'], None, r['docs'])
         for r in self.list('medications'):
             if r['otc'] or r['given']:
                 continue
@@ -1177,6 +1254,7 @@ class Store:
         return {k: v for k, v in out.items() if len(v) >= 2}
 
     def summary(self):
+        """Counts, review numbers, current medications and the date span, for the home page."""
         c = {k: self.db.execute(f'SELECT COUNT(*) FROM {k}').fetchone()[0] for k in KINDS}
         c['documents'] = self.db.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
         review = self.db.execute('SELECT COUNT(*) FROM documents WHERE needs_review=1').fetchone()[0]
@@ -1188,12 +1266,18 @@ class Store:
                                          "(end_date IS NULL AND status IS NULL)) ORDER BY name") if not self.is_otc(r['name'])]
         last = self._rows('SELECT * FROM encounters ORDER BY date DESC LIMIT 1')
         span = self.db.execute("SELECT MIN(date), MAX(date) FROM encounters").fetchone()
-        return {'counts': c, 'needs_review': review,
+        try:
+            from .checks import issues
+            checks = len(issues(self))
+        except Exception:  # noqa: BLE001 - a check that fails must never break the dashboard
+            checks = 0
+        return {'counts': c, 'needs_review': review, 'checks': checks,
                 'current_meds': [self._decode(r) for r in current],
                 'last_visit': self._decode(last[0]) if last else None,
                 'first_date': span[0], 'last_date': span[1]}
 
     def review_queue(self):
+        """Documents and entries marked as needing review."""
         docs = self._rows('SELECT id, title, doc_date, category, path, status, review_note FROM documents '
                           'WHERE needs_review=1 ORDER BY added DESC')
         recs = []

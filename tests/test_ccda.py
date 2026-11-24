@@ -305,6 +305,169 @@ class CcdaTests(unittest.TestCase):
         with self.assertRaises(ccda.NotCCDA):
             ccda.parse(b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')
 
+    def test_plan_is_marked_as_of_the_export(self):
+        plan = (b'<component><section><code code="18776-5"/><title>Treatment Plan</title><text><paragraph>'
+                b'Appointment Date: 01/02/2031</paragraph></text></section></component>\n  ')
+        doc = DOC.replace(b'<component><section><code code="29299-5"/>', plan + b'<component><section><code code="29299-5"/>')
+        page = ccda.page(ccda.parse(doc))                 # exported the same day as the visit
+        self.assertIn('Appointment Date', page)
+        self.assertNotIn('when this summary was exported', page)
+        late = doc.replace(b'<effectiveTime value="20200304120000-0500"/>', b'<effectiveTime value="20301123120000-0500"/>')
+        page = ccda.page(ccda.parse(late))                # exported ten years later
+        self.assertIn('As of 23 Nov 2030, when this summary was exported, not the visit on 4 Mar 2020', page)
+        self.assertEqual(page.count('when this summary was exported'), 1)   # only the plan section
+        with tempfile.TemporaryDirectory() as tmp:          # pages saved before are drawn again once
+            files = os.path.join(tmp, 'f'); os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            store.set_setting('page_version', 'done')       # keep the startup pass out of the way
+            up = Uploads(store, files, recheck=0)
+            sha = up.add('late.xml', late)['id']
+            for _ in range(200):
+                if store.document(sha)['status'] != 'processing':
+                    break
+                time.sleep(0.05)
+            pid = [d['id'] for d in store.documents() if d['ext'] == '.html'][0]
+            path = os.path.join(files, pid + '.html')
+            with open(path, 'w') as f:
+                f.write('old page')
+            self.assertEqual(up.repage(), 0)                 # up to date: nothing redrawn
+            store.set_setting('page_version', '1')
+            self.assertEqual(up.repage(), 1)
+            with open(path) as f:
+                self.assertIn('when this summary was exported', f.read())
+            self.assertEqual(store.get_setting('page_version'), ccda.PAGE_VERSION)
+            store.close()
+
+    def test_vaccines_are_read_once_per_shot(self):
+        vax = (b'<component><section><code code="11369-6"/><title>Immunizations</title><text>shots</text>'
+               b'<entry><substanceAdministration moodCode="EVN" negationInd="false"><statusCode code="completed"/>'
+               b'<effectiveTime value="20200304"/><consumable><manufacturedProduct><manufacturedMaterial>'
+               b'<code code="999" codeSystem="2.16.840.1.113883.12.292" displayName="Sample Seasonal SARS-COV-2 (COVID-19) vaccine"/>'
+               b'<lotNumberText>LOT1</lotNumberText></manufacturedMaterial><manufacturerOrganization><name>SampleVax</name>'
+               b'</manufacturerOrganization></manufacturedProduct></consumable></substanceAdministration></entry>'
+               b'<entry><substanceAdministration moodCode="EVN" negationInd="true"><effectiveTime value="20200304"/>'
+               b'<consumable><manufacturedProduct><manufacturedMaterial><code displayName="Influenza vaccine"/>'
+               b'</manufacturedMaterial></manufacturedProduct></consumable></substanceAdministration></entry>'
+               b'<entry><substanceAdministration moodCode="INT"><effectiveTime value="20300101"/>'
+               b'<consumable><manufacturedProduct><manufacturedMaterial><code displayName="Shingles vaccine"/>'
+               b'</manufacturedMaterial></manufacturedProduct></consumable></substanceAdministration></entry>'
+               b'</section></component>\n  ')
+        doc = DOC.replace(b'<component><section><code code="29299-5"/>', vax + b'<component><section><code code="29299-5"/>')
+        d = ccda.parse(doc)
+        self.assertEqual([(i['vaccine'], i['date'], i['lot'], i['manufacturer']) for i in d['immunizations']],
+                         [('COVID-19', '2020-03-04', 'LOT1', 'SampleVax')])     # refused and planned ones left out
+        self.assertEqual(ccda.vaccine_group('Influenza, Injectable, Quadrivalent'), 'Flu')
+        self.assertEqual(ccda.vaccine_group('tetanus/diphth/pertuss (Tdap) adult/adol'), 'Tetanus (Tdap/Td)')
+        self.assertEqual(ccda.vaccine_group('Something new', '312'), 'COVID-19')
+        later = doc.replace(b'20200304100000', b'20200601100000').replace(b'E1', b'E2')   # lists the same shot
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as z:
+            z.writestr('IHE_XDM/P1/DOC0001.XML', doc)
+            z.writestr('IHE_XDM/P1/DOC0002.XML', later)
+        with tempfile.TemporaryDirectory() as tmp:
+            files = os.path.join(tmp, 'f'); os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            up = Uploads(store, files, recheck=0)
+            sha = up.add('HealthSummary.zip', buf.getvalue())['id']
+            for _ in range(200):
+                if store.document(sha)['status'] != 'processing':
+                    break
+                time.sleep(0.05)
+            vx = store.list('immunizations')
+            self.assertEqual([(v['date'], v['name'], v['lot'], len(v['docs'])) for v in vx],
+                             [('2020-03-04', 'COVID-19 vaccine', 'LOT1', 2)])
+            self.assertIn('immunizations', {e['kind'] for e in store.timeline()})
+            # summaries loaded before vaccines were kept are read again once
+            store.db.execute('DELETE FROM immunizations'); store.db.commit()
+            store.set_setting('vaccines_version', '0')
+            self.assertEqual(up.backfill_vaccines(), 1)
+            self.assertEqual(up.backfill_vaccines(), 0)          # done: not read again
+            store.close()
+
+    def test_one_name_per_lab_test(self):
+        from healthdash import parsers
+        for n in ('Hgb A1c.', 'Hemoglobin A1c A,', 'HEMOGLOBIN A1C', 'Hemoglobin A1c'):
+            self.assertEqual(parsers.standard_name(n), 'Hemoglobin A1c', n)
+        self.assertEqual(parsers.standard_name('Vitamin A'), 'Vitamin A')      # a real name ending in A
+        self.assertEqual(parsers.standard_name('Ferritin.'), 'Ferritin')
+        for a, b in (('Chol', 'Cholesterol, total'), ('Trig', 'Triglycerides'), ('HDL Chol', 'HDL'),
+                     ('LDL Chol Calc (NIH)', 'LDL'), ('Polys', 'Neutrophils %'), ('Basos, Abs. Count', 'Basophils, absolute'),
+                     ('Body Mass Index Measured', 'BMI'), ('Peripheral Pulse Rate', 'Heart rate'),
+                     ('Sodium [Moles/volume] in Serum or Plasma', 'Sodium'), ('Lipase Lvl', 'Lipase')):
+            self.assertEqual(parsers.standard_name(a), b, a)
+        self.assertEqual(parsers.labcorp_name('BUN B'), 'BUN')
+        for a in ('UA Spec Grav', 'Specific Gravity, Ur (S.G.)', 'Specific Gravity, Urine Dipst*'):
+            self.assertEqual(parsers.standard_name(a), 'Urine specific gravity', a)
+        for a, b in (('Bmi', 'BMI'), ('Wbc', 'WBC'), ('GLUCOSE POC', 'Glucose Poc'), ('eGFR', 'eGFR'), ('Hdl', 'HDL')):
+            self.assertEqual(parsers.display_name(a), b, a)
+        self.assertEqual(parsers.labcorp_name('Potassium B,'), 'Potassium')
+        self.assertEqual(parsers.labcorp_name('Vitamin B'), 'Vitamin B')
+        self.assertEqual(parsers.labcorp_name('Hepatitis A'), 'Hepatitis A')
+        self.assertTrue(parsers.JUNK_ANALYTE.search('Draw Date'))
+        self.assertFalse(parsers.JUNK_ANALYTE.search('Prothrombin time'))
+        rows = [{'date': '2021-02-03', 'analyte': a, 'value': v, 'num': None} for a, v in
+                (('Hgb A1c.', '5.5 %'), ('HgbA1C Analyzer Serial#', '12345678'), ('Operator Name:', 'X'))]
+        self.assertEqual([r['analyte'] for r in parsers.normalize(rows)], ['Hemoglobin A1c'])
+        with tempfile.TemporaryDirectory() as tmp:          # results saved before: renamed and merged once
+            files = os.path.join(tmp, 'f'); os.makedirs(files)
+            store = Store(os.path.join(tmp, 't.db'))
+            store.upsert_imported('labs', [
+                {'id': 'a', 'date': '2021-02-03', 'analyte': 'Hgb A1c.', 'value': '5.5 %', 'num': 5.5, 'docs': ['d1']},
+                {'id': 'b', 'date': '2021-02-03', 'analyte': 'Hemoglobin A1c A,', 'value': '5.5 %', 'num': 5.5, 'docs': ['d2']},
+                {'id': 'c', 'date': '2022-02-03', 'analyte': 'Hgb A1c.', 'value': '5.7 %', 'num': 5.7},
+                {'id': 'd', 'date': '2022-02-05', 'analyte': 'Hgba1C Analyzer Serial#', 'value': '12345679'}])
+            up = Uploads(store, files, recheck=0)
+            store.set_setting('labnames_version', '0')
+            up.tidy_lab_names()
+            labs = sorted((l['date'], l['analyte'], tuple(sorted(l['docs']))) for l in store.list('labs'))
+            self.assertEqual(labs, [('2021-02-03', 'Hemoglobin A1c', ('d1', 'd2')), ('2022-02-03', 'Hemoglobin A1c', ())])
+            store.close()
+
+    def test_drug_names_written_other_ways(self):
+        from healthdash.store import _combo
+        k = lambda n: _combo(ccda.drug_key(n))
+        self.assertEqual(k('acetaminophen 325 MG / butalbital 50 MG / caffeine 40 MG Oral Capsule'),
+                         'acetaminophen-butalbital-caffeine')
+        self.assertEqual(k('APAP/butalbital/caffeine (acetaminophen/butalbital/caffeine 325 mg)'),
+                         'acetaminophen-butalbital-caffeine')
+        self.assertEqual(k('Butalbital-acetaminophen-caffeine 50-325-40 MG Oral Capsule'), 'acetaminophen-butalbital-caffeine')
+        self.assertEqual(k('PROAIR HFA 108 (90 Base) MCG/ACT Inhalation Aero Soln'), 'albuterol')
+        self.assertEqual(k('Amoxicillin-Pot Clavulanate 875-125 MG Oral Tab'), 'amoxicillin-clavulanate')
+        self.assertEqual(k('Examplol 10 MG Oral Tab'), 'examplol')
+        self.assertEqual(k('MCG/ACT Something'), k('MCG/ACT Something'))   # a unit with a slash is not a combination
+
+    def test_conditions_with_other_wording_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, 't.db'))
+            store.upsert_imported('conditions', [
+                {'id': 'ccda-cond-1', 'name': 'Hypertension', 'status': 'active', 'first_noted': '2019-09-09', 'docs': ['d1']},
+                {'id': 'ccda-cond-2', 'name': 'High blood pressure', 'status': 'active', 'first_noted': '2020-10-10', 'docs': ['d2']},
+                {'id': 'ccda-cond-3', 'name': 'Major depressive disorder', 'status': 'active'},
+                {'id': 'ccda-cond-4', 'name': 'Depression NOS', 'status': 'active', 'docs': ['d3']}])
+            store.create('conditions', {'name': 'Depression', 'status': 'active', 'notes': 'mine'})
+            self.assertEqual(store.merge_conditions(), 2)
+            got = {c['name']: c for c in store.list('conditions')}
+            self.assertEqual(sorted(got), ['Depression', 'High blood pressure (hypertension)', 'Major depressive disorder'])
+            hbp = got['High blood pressure (hypertension)']
+            self.assertEqual((hbp['first_noted'], sorted(hbp['docs'])), ('2019-09-09', ['d1', 'd2']))
+            self.assertEqual((got['Depression']['notes'], got['Depression']['docs']), ('mine', ['d3']))   # hand entry kept
+            store.close()
+
+    def test_hospital_department_is_not_a_place(self):
+        dept = (DOC.replace(b'<name>Sample Health Network</name></representedCustodianOrganization>',
+                            b'<name>Sample General Hospital</name><addr><streetAddressLine>12 Main St</streetAddressLine>'
+                            b'<city>Sampleton</city></addr></representedCustodianOrganization>')
+                   .replace(b'<responsibleParty><assignedEntity><representedOrganization><name>Sample Health Network</name></representedOrganization></assignedEntity></responsibleParty>', b'')
+                   .replace(b'<location><name>Riverside Family Practice</name></location>',
+                            b'<location><name>Sleep Lab Hospital</name><addr><streetAddressLine>12 Main Street</streetAddressLine>'
+                            b'<city>Sampleton</city></addr></location>'))
+        v = ccda.parse(dept)['visit']
+        self.assertEqual((v['facility'], v['location'], v['department']), ('Sample General Hospital', None, 'Sleep Lab Hospital'))
+        elsewhere = dept.replace(b'12 Main Street', b'99 Other Road')     # a different building: left as it is
+        self.assertEqual(ccda.parse(elsewhere)['visit']['facility'], 'Sleep Lab Hospital')
+        self.assertTrue(ccda.during('2020-03-05', {'date': '2020-03-04'}))
+        self.assertFalse(ccda.during('2024-05-05', {'date': '2021-01-01'}))
+
     def test_zip_import_adds_once_and_dedupes_results(self):
         later = DOC.replace(b'20200304100000', b'20200601100000').replace(b'E1', b'E2') \
                    .replace(b'<content ID="m1">Examplol', b'<content ID="m9">Other').replace(b'#m1', b'#m9')

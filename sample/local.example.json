@@ -36,5 +36,11 @@
     "not": [
       "samplocet\\s*900\\b"
     ]
+  },
+  "condition_names": {
+    "Example syndrome": [
+      "example syndrome (history)",
+      "syndrome, example type"
+    ]
   }
 }

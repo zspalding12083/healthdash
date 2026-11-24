@@ -218,22 +218,30 @@ the plugin's settings, enter the dashboard address and key, and allow the sites 
 
 ## Layout
 
+How the parts fit together, the data model, the import rules and the API are in
+[docs/SYSTEM.md](docs/SYSTEM.md).
+
 ```
 healthdash/
   extract.py    PDF text + OCR, DICOMDIR headers from imaging discs, cached by sha256
   catalog.py    per-file metadata; guesses dates/titles for new files
-  parsers.py    lab printout parsers (portal lists, Cerner-style result blocks) + analyte names
+  parsers.py    lab printout parsers (portal lists, Cerner-style blocks, LabCorp reports) + one name per test
+  ccda.py       health summary exports (C-CDA): visits, results, medications, problems, vaccines, pages
+  fhir.py       FHIR bundle exports into the same shapes
   organize.py   sorted, renamed hard-link copy of the source folder
   ingest.py     extract -> describe -> POST to the dashboard -> upload missing files
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
-  uploads.py    files added on the dashboard: save, read in the background, file or ask
+  uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes
+  checks.py     record checks: questions on the Review tab about likely mistakes and duplicates
+  people.py     several people on one dashboard
   doctor.py     `check`: what's installed and how to install what isn't
-  auth.py       accounts, password hashing, sessions
+  auth.py       accounts, password hashing, sessions, plugin keys
   macos.py      `service`: launchd setup on a Mac
-  store.py      SQLite schema, FTS search, timeline, lab series, edit tracking
+  store.py      SQLite schema, FTS search, timeline, lab series, edit tracking, tidy-up passes
   server.py     JSON API + static page
   static/index.html   the whole UI, no build step
-deploy/         Linux server: install.sh, sync.sh, systemd unit
+deploy/         Linux server: install.sh, sync.sh, add-person.sh, systemd unit
+docs/           SYSTEM.md (how it works) and screenshots
 sample/         made-up demo data and an example local.json
 ```
 

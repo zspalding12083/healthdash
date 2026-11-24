@@ -16,6 +16,7 @@ import sys
 
 
 def main(argv=None):
+    """Command line: `python3 -m healthdash serve|ingest|organize|users|keys|check|wipe|service ...`."""
     ap = argparse.ArgumentParser(prog='healthdash')
     sub = ap.add_subparsers(dest='cmd', required=True)
 
@@ -91,6 +92,7 @@ def main(argv=None):
 
 
 def users_cli(action, name, db):
+    """Add, list, remove or change the password of a sign-in account in the database at `db`."""
     import getpass
     from .auth import Auth
     from .store import Store, ValidationError

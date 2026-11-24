@@ -53,10 +53,14 @@ PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'l
 
 
 def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None, people=None):
+    """The HTTP request handler class for one dashboard: static page, JSON API, file downloads,
+    uploads and sign-in. `people` holds each person on the dashboard; requests pick one with X-Person."""
     people = people or People(store, files_dir, uploads)
     home = store
 
     class Handler(BaseHTTPRequestHandler):
+        """Handles one request. Every API call is checked by _allowed (signed in, plugin key, or the
+        ingest host for the script routes) before _dispatch runs it."""
         server_version = 'healthdash'
 
         def log_message(self, fmt, *args):  # keep request logs (which include search terms) out of the journal
@@ -65,6 +69,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         # ---- plumbing ------------------------------------------------------------------
 
         def _send(self, code, body, ctype='application/json; charset=utf-8', extra=None):
+            """Send a response: JSON for anything that is not bytes, with no caching of private data."""
             if not isinstance(body, (bytes, bytearray)):
                 body = json.dumps(body).encode()
             self.send_response(code)
@@ -122,6 +127,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._who
 
         def _allowed(self, method, parts):
+            """May this request go ahead? Signed in: yes. A plugin key: only its routes. Not signed in:
+            the page itself and the sign-in routes, plus the script routes from the ingest host."""
             if not auth or self._user():
                 return True
             if self._key_user():
@@ -148,6 +155,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return urlparse(origin).netloc == self.headers.get('Host')
 
         def _route(self, method):
+            """Parse the path, pick the person, check access, and dispatch; errors become JSON replies."""
             u = urlparse(self.path)
             parts = [p for p in u.path.split('/') if p]
             qs = {k: v[-1] for k, v in parse_qs(u.query).items()}
@@ -182,6 +190,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         # ---- routes --------------------------------------------------------------------
 
         def _dispatch(self, method, parts, qs):
+            """Run one API call (see docs/SYSTEM.md for the routes)."""
             if method == 'GET' and (not parts or parts == ['index.html']):
                 return self._static('index.html')
             if method == 'GET' and parts[0] == 'static' and len(parts) == 2:
@@ -207,6 +216,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     return self._send(200, self.ctx.store.lab_series())
                 if p == ['review']:
                     return self._send(200, self.ctx.store.review_queue())
+                if p == ['checks']:
+                    from .checks import issues
+                    return self._send(200, issues(self.ctx.store))
                 if p == ['documents']:
                     return self._send(200, self.ctx.store.documents())
                 if len(p) == 2 and p[0] == 'documents':
@@ -253,6 +265,13 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     if not self._importer():
                         return self._err(403, 'uploads are only allowed from the ingest host')
                     return self._upload(p[1], self._raw_body())
+                if p == ['checks']:
+                    from .checks import answer
+                    b = self._json() or {}
+                    try:
+                        return self._send(200, answer(self.ctx.store, str(b.get('key') or ''), str(b.get('action') or '')))
+                    except ValueError as e:
+                        return self._err(400, str(e))
                 if p == ['medications', 'current-list']:
                     b = self._json() or {}
                     return self._send(200, self.ctx.store.apply_med_list(b.get('text'), b.get('as_of'), bool(b.get('apply'))))
@@ -332,6 +351,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._err(404, 'not found')
 
         def _move(self, did, to):
+            """Move a document, and the entries made only from it, to another person."""
             src = people.get(self.headers.get('X-Person') or MAIN)
             dst = people.get(to)
             if dst is src:
@@ -346,12 +366,16 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return {'moved': did, 'to': dst.id, 'entries': {k: len(v) for k, v in records.items()}}
 
         def _import(self, body):
+            """Apply an import from the ingest host: documents, records of each kind and settings (place
+            names, over-the-counter words, condition wordings), then the tidy-up passes."""
             result = {}
             st = self.ctx.store
             if body.get('documents'):
                 result['documents'] = st.upsert_documents(body['documents'])
             if isinstance(body.get('place_names'), dict):
                 st.set_place_names(body['place_names'])
+            if isinstance(body.get('condition_names'), dict):
+                st.set_condition_names(body['condition_names'])
             if isinstance(body.get('otc'), dict):
                 st.set_otc(body['otc'])
             for kind in KINDS:
@@ -369,6 +393,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return result
 
         def _upload(self, name, data):
+            """Store the bytes of a document already imported (named by its sha256), atomically."""
             sha, _, ext = name.partition('.')
             if not SHA_RE.match(sha) or ('.' + ext.lower()) not in FILE_TYPES:
                 raise ValidationError('file name must be <sha256>.<ext>')
@@ -385,6 +410,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._send(200, {'stored': name})
 
         def _file(self, sha, download):
+            """Send a stored file (inline, or as a download), with a reader style for saved web pages."""
             if not SHA_RE.match(sha):
                 return self._err(404, 'not found')
             match = [f for f in os.listdir(self.ctx.files_dir) if f.split('.')[0] == sha and not f.endswith('.tmp')]
@@ -408,6 +434,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
 
         def _static(self, name):
+            """Send a file from healthdash/static."""
             if '/' in name or name.startswith('.'):
                 return self._err(404, 'not found')
             path = os.path.join(STATIC, name)
@@ -427,6 +454,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
 
 def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', require_login=True,
           main_name=None):
+    """Open the database and run the dashboard on host:port until interrupted."""
     os.makedirs(files_dir, exist_ok=True)
     store = Store(db_path)
     from .auth import Auth

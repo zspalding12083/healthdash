@@ -67,6 +67,7 @@ def _need_mac():
 
 
 def install(port=9380, lan=False, title=None):
+    """Install and start the dashboard as a launchd service for this Mac user."""
     _need_mac()
     os.makedirs(os.path.join(DATA, 'files'), mode=0o700, exist_ok=True)
     os.chmod(DATA, 0o700)
@@ -99,6 +100,7 @@ def uninstall():
 
 
 def status():
+    """Print whether the launchd service is installed and running; return 1 if not installed."""
     _need_mac()
     if not os.path.exists(PLIST):
         print('Not installed. Run: python3 -m healthdash service install')

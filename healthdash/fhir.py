@@ -40,6 +40,8 @@ def _status(c):
 
 
 def parse(data):
+    """One FHIR bundle (bytes) -> {'visits', 'labs', 'medications', 'problems', 'allergies',
+    'procedures', 'immunizations', 'files', 'messages', 'family', ...}, or NotFHIR."""
     try:
         b = json.loads(data)
     except (ValueError, UnicodeDecodeError) as e:
@@ -50,7 +52,7 @@ def parse(data):
     for e in b.get('entry') or []:
         r = e.get('resource') or {}
         R[r.get('resourceType')].append(r)
-    out = {'visits': [], 'labs': [], 'medications': [], 'problems': [], 'allergies': [], 'procedures': [],
+    out = {'visits': [], 'labs': [], 'medications': [], 'problems': [], 'allergies': [], 'procedures': [], 'immunizations': [],
            'invoices': [], 'files': {}, 'messages': [], 'family': []}
 
     # visits: one per day she was seen; type and doctor from the appointment she arrived for
@@ -120,6 +122,20 @@ def parse(data):
         if name:
             out['procedures'].append({'name': name, 'date': _date(p.get('performedDateTime') or (p.get('performedPeriod') or {}).get('start'))})
 
+    for im in R['Immunization']:
+        if im.get('status') in ('not-done', 'entered-in-error'):
+            continue
+        name = _cc(im.get('vaccineCode'))
+        date = _date(im.get('occurrenceDateTime') or im.get('date'))
+        if name and date:
+            from .ccda import vaccine_group
+            cvx = next((c.get('code') for c in (im.get('vaccineCode') or {}).get('coding') or []
+                        if 'cvx' in (c.get('system') or '').lower()), None)
+            out['immunizations'].append({'vaccine': vaccine_group(name, cvx), 'product': name, 'date': date,
+                                         'lot': im.get('lotNumber') or None,
+                                         'manufacturer': (im.get('manufacturer') or {}).get('display') or None,
+                                         'provider': None, 'facility': None})
+
     for d in R['DocumentReference']:
         for c in d.get('content') or []:
             url = ((c.get('attachment') or {}).get('url') or '').lstrip('./')
@@ -137,6 +153,7 @@ def parse(data):
 
 
 def _value(src):
+    """An observation value as (text, number or None, unit), or None when it has no value."""
     if 'valueQuantity' in src:
         q = src['valueQuantity']
         if q.get('value') is None:
@@ -161,6 +178,7 @@ def messages_page(msgs, title='Portal messages'):
 
 
 def summary_page(f, title):
+    """A readable HTML page of what a FHIR bundle holds (shown and searched on the dashboard)."""
     parts = [f'<h1>{html.escape(title)}</h1>']
     if f['visits']:
         parts.append('<h2>Visits</h2><table><tr><th>Date</th><th>Type</th><th>Doctor</th></tr>' + ''.join(

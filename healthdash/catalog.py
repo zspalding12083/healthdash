@@ -27,6 +27,7 @@ _DATE_PATTERNS = [
 
 
 def guess_date(name):
+    """A date written in a file name ("2019-03-04", "03_04_2019", "Mar 2019") as YYYY-MM-DD, YYYY-MM or None."""
     for rx, order in _DATE_PATTERNS:
         m = rx.search(name)
         if not m:
@@ -52,6 +53,7 @@ def guess_title(path):
 
 
 def load(path=None):
+    """The hand-made catalog of the records folder (data/catalog.json), or an empty one."""
     path = path or config.CATALOG
     if not os.path.exists(path):
         return {'files': {}, 'discs': {}}

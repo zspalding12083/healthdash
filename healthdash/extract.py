@@ -68,6 +68,7 @@ def ocr_image(path):
 
 
 def office_text(path):
+    """Text of a Word or other office document, converted with LibreOffice."""
     with tempfile.TemporaryDirectory() as tmp:
         from .doctor import find_soffice
         _run([find_soffice() or 'soffice', '--headless', '--convert-to', 'txt:Text', '--outdir', tmp, path], timeout=120)
@@ -79,6 +80,7 @@ def office_text(path):
 
 
 def extract_file(path):
+    """Read one file: {'pages': [text per page], 'ocr_pages': [pages read by OCR]}."""
     ext = os.path.splitext(path)[1].lower()
     ocr = []
     if ext == '.pdf':
@@ -238,6 +240,7 @@ def html_text(data):
     CELL = '\x00'
 
     class P(HTMLParser):
+        """Collects the readable text of an HTML page, one line per block, skipping scripts and styles."""
         SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'head'}
         BLOCK = {'p', 'div', 'br', 'tr', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'section', 'article',
                  'header', 'footer', 'dt', 'dd', 'ul', 'ol', 'hr', 'pre', 'nav'}
@@ -247,6 +250,7 @@ def html_text(data):
             self.out, self.skip, self.pre = [], 0, 0
 
         def handle_starttag(self, tag, attrs):
+            """Start a new line at block elements; count nested elements whose text is skipped."""
             if tag in self.SKIP:
                 self.skip += 1
             elif tag in self.BLOCK:

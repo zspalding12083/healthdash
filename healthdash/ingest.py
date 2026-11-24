@@ -37,6 +37,8 @@ def _get(url):
 
 
 def build(source, log=print):
+    """Read the records folder: every document with its text and catalog details, the imaging
+    discs, and the hand-built records (data/records.json) with file names mapped to document ids."""
     manifest = extract_all(source, config.EXTRACTED, log=log)
     cat = catalog.load()
     sorted_already = os.path.realpath(source) == os.path.realpath(config.ORGANIZED)   # the sorted copy is the source
@@ -100,6 +102,8 @@ def build(source, log=print):
 
 
 def ingest(source, pi, dry_run=False, log=print):
+    """Build from the records folder and send the result to the dashboard at `pi` (import, then
+    the files it does not have yet). With dry_run, only report what would be sent."""
     b = build(source, log=log)
     log(f"{len(b['documents'])} documents, {len(b['discs'])} imaging discs, "
         + ', '.join(f'{len(v)} {k}' for k, v in b['records'].items()))
@@ -116,7 +120,8 @@ def ingest(source, pi, dry_run=False, log=print):
     res = _post(pi + '/api/import', {'documents': b['documents']})
     log(f"documents: {res.get('documents')}")
     if b['records'] or config.PLACE_NAMES or config.OTC:
-        res = _post(pi + '/api/import', dict(b['records'], place_names=config.PLACE_NAMES, otc=config.OTC))
+        res = _post(pi + '/api/import', dict(b['records'], place_names=config.PLACE_NAMES, otc=config.OTC,
+                                                  condition_names=config.CONDITION_NAMES))
         for k, v in res.items():
             log(f'{k}: {v}')
     missing = set(_get(pi + '/api/files/missing'))

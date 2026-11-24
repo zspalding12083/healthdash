@@ -17,6 +17,7 @@ EXTRA = ['drug_alias', 'moved']
 
 
 def _empty_db(path):
+    """Delete every record and document from one database (accounts and keys are kept)."""
     s = Store(path)   # brings an older database up to date first, so every table exists
     s.close()
     db = sqlite3.connect(path)
@@ -36,6 +37,7 @@ def _empty_db(path):
 
 
 def _empty_files(d):
+    """Delete every stored file under a folder."""
     n = 0
     if os.path.isdir(d):
         for root, dirs, files in os.walk(d, topdown=False):
@@ -59,6 +61,7 @@ def targets(db, files):
 
 
 def wipe(db, files, yes=False, ask=input):
+    """Empty the dashboard and every person on it, after asking (unless yes=True)."""
     if not os.path.exists(db):
         raise SystemExit(f'no database at {db}')
     todo = targets(db, files)

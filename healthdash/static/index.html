@@ -11,21 +11,21 @@
   --bg:#f5f6f4;--panel:#fff;--ink:#1d2421;--ink2:#56605b;--ink3:#8a938e;--line:#e2e5e1;--line2:#eef0ed;
   --accent:#256c6c;--accent-soft:#e3f0ef;--warn:#a5521b;--warn-soft:#fbeee4;--bad:#b3261e;--bad-soft:#fbe9e7;
   --ok:#2f6b2f;--ok-soft:#e7f2e5;
-  --c-enc:#2f5f9e;--c-test:#7a4fa0;--c-proc:#b3261e;--c-med:#2f7a4a;--c-img:#9c6a12;--c-fin:#6b6b6b;
+  --c-enc:#2f5f9e;--c-test:#7a4fa0;--c-proc:#b3261e;--c-med:#2f7a4a;--c-img:#9c6a12;--c-vax:#0e7c86;--c-fin:#6b6b6b;
   --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
   --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
   --ok:#8fcf8a;--ok-soft:#1f3320;
-  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-fin:#a0a0a0;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;
   --shadow:none;
 }}
 :root[data-theme=dark]{
   --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
   --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
   --ok:#8fcf8a;--ok-soft:#1f3320;
-  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-fin:#a0a0a0;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;
   --shadow:none;
 }
 *{box-sizing:border-box}
@@ -65,7 +65,7 @@ select.f{padding:5px 8px;border:1px solid var(--line);border-radius:8px;backgrou
 .ev .t{font-weight:550}
 .ev .s{color:var(--ink2);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .k-encounters{background:var(--c-enc)}.k-tests{background:var(--c-test)}.k-procedures{background:var(--c-proc)}
-.k-medications{background:var(--c-med)}.k-imaging{background:var(--c-img)}.k-financial{background:var(--c-fin)}
+.k-medications{background:var(--c-med)}.k-imaging{background:var(--c-img)}.k-immunizations{background:var(--c-vax)}.k-financial{background:var(--c-fin)}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--line2);color:var(--ink2);margin-left:6px;vertical-align:1px}
 .tag.bad{background:var(--bad-soft);color:var(--bad)}.tag.ok{background:var(--ok-soft);color:var(--ok)}.tag.warn{background:var(--warn-soft);color:var(--warn)}
 table{width:100%;border-collapse:collapse;font-size:14px}
@@ -175,12 +175,12 @@ details.panel[open] summary{margin-bottom:10px}
 <script>
 'use strict';
 const TABS = [
-  ['timeline','Timeline'],['meds','Medications'],['visits','Visits'],['tests','Tests & imaging'],
-  ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['providers','Doctors'],
+  ['timeline','Timeline'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
+  ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['vaccines','Vaccines'],['providers','Doctors'],
   ['documents','Documents'],['review','Needs review']
 ];
 const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
-  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',providers:'Doctor'};
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor'};
 const FIELDS = {
   encounters:['date','end_date','type','facility','provider','reason','summary'],
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
@@ -190,10 +190,11 @@ const FIELDS = {
   conditions:['name','status','first_noted','notes'],
   allergies:['substance','reaction','severity'],
   imaging:['date','modality','description','facility','location','notes'],
+  immunizations:['date','name','product','lot','manufacturer','facility','provider','notes'],
   providers:['name','specialty','facility','phone','notes'],
 };
 const LONG = new Set(['summary','result','notes','description','reason']);
-const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging']), year:'', fac:''}};
+const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging','immunizations']), year:'', fac:''}};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = v => v == null ? '' : (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -241,7 +242,7 @@ $('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTime
 
 async function render(){
   const sum = await load('summary','/api/summary');
-  renderTabs(sum.needs_review);
+  renderTabs(sum.needs_review + (sum.checks || 0));
   $('#span').textContent = sum.first_date ? `Records ${sum.first_date.slice(0,4)} to ${sum.last_date.slice(0,4)}` : '';
   const m = $('#main');
   try{
@@ -284,7 +285,7 @@ VIEWS.timeline = async (sum) => {
   </div>`;
   if(sum.last_visit) html += `<div class="panel small">Most recent visit: <a href="#" data-open="encounters|${esc(sum.last_visit.id)}">${fdate(sum.last_visit.date)}, ${esc(sum.last_visit.facility||'')}: ${esc(sum.last_visit.reason||sum.last_visit.type||'')}</a></div>`;
   html += `<div class="panel"><div class="filters">` +
-    [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Med changes']]
+    [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Med changes'],['immunizations','Vaccines']]
       .map(([k,l]) => `<button class="chip ${f.kinds.has(k)?'on':''}" data-kind="${k}"><span class="dot k-${k}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>${l}</button>`).join('') +
     `<select class="f" id="f-year"><option value="">All years</option>${years.map(y=>`<option ${f.year===y?'selected':''}>${y}</option>`).join('')}</select>
      <select class="f" id="f-fac"><option value="">All places</option>${facs.map(x=>`<option ${f.fac===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
@@ -376,10 +377,31 @@ function recordTable(kind, rows, cols, title, opts={}){
 VIEWS.visits = async () => recordTable('encounters', await load('encounters','/api/encounters'),
   [['date','Date'],['end_date','Until','hide-sm'],['type','Type'],['facility','Where'],['provider','Doctor','hide-sm'],['reason','Reason']], 'Visits and admissions');
 
+// imaging reports are tests with category "imaging"; they go on the Imaging tab with the discs
+const isImagingTest = t => (t.category||'').toLowerCase() === 'imaging';
 VIEWS.tests = async () => {
-  const tests = await load('tests','/api/tests'), img = await load('imaging','/api/imaging');
-  return recordTable('tests', tests, [['date','Date'],['name','Test'],['category','Type','hide-sm'],['facility','Where'],['result','Result / impression'],['abnormal','']], 'Tests and reports') +
+  const tests = (await load('tests','/api/tests')).filter(t => !isImagingTest(t));
+  return recordTable('tests', tests, [['date','Date'],['name','Test'],['category','Type','hide-sm'],['facility','Where'],['result','Result / impression'],['abnormal','']], 'Tests and reports',
+    {note:'Heart, sleep, nerve and other tests. Lab values are on Lab trends; X-rays, scans and ultrasounds are on Imaging.'});
+};
+
+VIEWS.imaging = async () => {
+  const reports = (await load('tests','/api/tests')).filter(isImagingTest), img = await load('imaging','/api/imaging');
+  return recordTable('tests', reports, [['date','Date'],['name','Study'],['body_part','Body part','hide-sm'],['facility','Where'],['result','Impression'],['abnormal','']], 'Imaging reports') +
     recordTable('imaging', img, [['date','Date'],['modality','Type'],['description','Study'],['facility','Where'],['location','Disc / images','hide-sm']], 'Imaging discs', {note:'The actual images (CT/MRI slices) are on the discs copied into the records folder. Open them with the viewer on the disc or any DICOM viewer.'});
+};
+
+VIEWS.vaccines = async () => {
+  const vax = await load('immunizations','/api/immunizations');
+  const latest = {};
+  for(const v of vax) if(!latest[v.name] || (v.date||'') > (latest[v.name].date||'')) latest[v.name] = v;
+  const rows = Object.values(latest).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  const count = n => vax.filter(v => v.name === n).length;
+  let html = `<div class="panel"><h2>Most recent of each</h2><p class="muted small" style="margin-top:-6px">The last time each vaccine shows up in the records.</p>` +
+    (rows.length ? `<div class="tablewrap"><table><thead><tr><th data-sort>Vaccine</th><th data-sort>Last given</th><th data-sort>Doses on record</th><th class="hide-sm">Product</th></tr></thead><tbody>` +
+      rows.map(v => `<tr class="click" data-open="immunizations|${esc(v.id)}"><td><b>${esc(v.name)}</b></td><td class="nowrap" data-v="${esc(v.date||'')}">${fdate(v.date)}</td><td data-v="${count(v.name)}">${count(v.name)}</td><td class="hide-sm small">${esc(v.product)}</td></tr>`).join('') +
+      `</tbody></table></div>` : '<div class="empty">None yet.</div>') + `</div>`;
+  return html + recordTable('immunizations', vax, [['date','Date'],['name','Vaccine'],['product','Product','hide-sm'],['lot','Lot','hide-sm'],['facility','Where'],['provider','Given by','hide-sm']], 'Every dose');
 };
 
 VIEWS.procedures = async () => recordTable('procedures', await load('procedures','/api/procedures'),
@@ -392,15 +414,18 @@ VIEWS.providers = async () => recordTable('providers', await load('providers','/
   [['name','Name'],['specialty','Specialty'],['facility','Practice / hospital'],['phone','Phone','hide-sm']], 'Doctors and care team');
 
 // ---------- lab trends ----------
-const LAB_GROUPS = [
-  ['Blood counts', /^(wbc|rbc|hemoglobin|hematocrit|platelets|mcv|mch|mchc|rdw|mpv|neutro|lympho|mono|eosino|baso|band|immature)/i],
+const LAB_GROUPS = [   // the first match wins: urine and A1c before blood counts
+  ['Urine', /urine|^ua |, ur\b|^cast|crystals?|ketone|nitrite|leukocyte esterase|urobilinogen|microalb|specific gravity|^character$|^color$/i],
+  ['Blood sugar', /^(glucose|hemoglobin a1c|a1c)/i],
+  ['Blood counts', /^(wbc|rbc|hemoglobin|hematocrit|platelets|mcv|mch|mchc|rdw|mpv|neutro|lympho|mono|eosino|baso|band|immature|nrbc|nucleated)/i],
   ['Kidney & electrolytes', /^(sodium|potassium|chloride|co2|anion|bun|creatinine|egfr|gfr|calcium|magnesium|phosph|osmol)/i],
   ['Liver & protein', /^(alt|ast|alkaline|bilirubin|albumin|total protein|a\/g|globulin|ggt|lipase|amylase)/i],
-  ['Blood sugar', /^(glucose|hemoglobin a1c|a1c)/i],
+  ['Iron & vitamins', /^(iron|ferritin|tibc|transferrin|vitamin|folate|b12)/i],
   ['Clotting', /^(inr|prothrombin|aptt|ptt|fibrinogen|d-dimer)/i],
   ['Heart', /^(troponin|bnp|nt-probnp|ck)/i],
   ['Cholesterol', /^(cholesterol|ldl|hdl|triglycer)/i],
-  ['Vital signs', /^(body |bmi|systolic|diastolic|heart rate|respiratory rate|oxygen saturation|pulse)/i],
+  ['Vital signs', /^(body |bmi|systolic|diastolic|heart rate|respiratory rate|oxygen saturation|pulse|temperature)/i],
+  ['Blood gases', / art$|^(cohb|methb|o2hb|fio2|so2|be\(b\)|thb)/i],
 ];
 function labGroup(name){ const g = LAB_GROUPS.find(([, rx]) => rx.test(name)); return g ? g[0] : 'Other tests'; }
 function refRange(s){ const m = (s||'').match(/(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/); return m ? [+m[1], +m[2]] : null; }
@@ -589,6 +614,7 @@ async function markReviewed(kind, id){
 
 VIEWS.review = async () => {
   const r = await api('/api/review');
+  const chk = await api('/api/checks');
   let html = `<div class="panel"><h2>Needs review</h2>
     <p style="margin-top:-6px">Some details were filled in from records that didn't say for sure, most often a date. Each item below says what's unsure.</p>
     <ul class="small" style="margin:4px 0 14px 18px;padding:0">
@@ -596,7 +622,24 @@ VIEWS.review = async () => {
       <li><b>Change it</b>: fix what you know better. Changes you make are never overwritten by a later import.</li>
       <li><b>Delete</b>: it's wrong or doesn't belong here. It won't come back on a later import.</li>
       <li>Not sure either? Leave it here; nothing is lost.</li></ul>`;
-  if(!r.documents.length && !r.records.length) return html + '<div class="empty">All caught up.</div></div>';
+  if(chk.length){
+    html += `<h3>Things that look wrong (${chk.length})</h3><p class="small muted" style="margin-top:-4px">Found by checking the records against each other. Answering “same” also teaches the dashboard, so later imports group them without asking; “not the same” is remembered.</p>` +
+      chk.map(x => `<div class="hit review-item"><div><span class="tag">${esc(x.tag)}</span> <b>${esc(x.title)}</b></div>
+        <div style="margin-top:4px"><b>${esc(x.ask)}</b></div><div class="small muted" style="margin-top:2px">${esc(x.note)}</div>
+        ${(x.sides||[]).map(s => `<div class="small" style="margin:8px 0 0 10px;padding-left:8px;border-left:3px solid var(--line)">
+          <b>${esc(s.name)}</b>${s.open?` <button class="btn" style="padding:1px 8px;font-size:12px" data-open="${esc(s.open)}">Open entry</button>`:''}
+          ${s.rows.map(r => `<div style="margin-top:3px">${esc(r.text)}${r.docs.length?` <button class="btn" style="padding:1px 8px;font-size:12px" data-doc="${esc(r.docs[0])}" data-date="${esc(r.date||'')}">See the source</button>`:' <span class="muted">(no source document)</span>'}</div>`).join('')}
+          ${s.more?`<div class="muted" style="margin-top:3px">and ${s.more} earlier result${s.more===1?'':'s'}</div>`:''}</div>`).join('')}
+        <div class="row-actions" style="justify-content:flex-start;margin-top:8px;flex-wrap:wrap">${x.answers.map((a, i) =>
+          `<button class="btn ${i===0?'primary':''}" data-chk="${esc(x.key)}" data-act="${esc(a.id)}">${esc(a.label)}</button>`).join('')}</div></div>`).join('');
+  }
+  setTimeout(() => document.querySelectorAll('[data-chk]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation(); b.disabled = true;
+    try{ await api('/api/checks', {method:'POST', body:JSON.stringify({key:b.dataset.chk, action:b.dataset.act})}); }
+    catch(e){ alert(e.message || e); }
+    invalidate(); render();
+  }));
+  if(!r.documents.length && !r.records.length) return html + (chk.length ? '' : '<div class="empty">All caught up.</div>') + '</div>';
   const card = (tag, title, when, ask, note, btns) => `<div class="hit review-item"><div><span class="tag">${tag}</span> <b>${esc(title)}</b> <span class="muted small">${esc(when)}</span></div>
     <div style="margin-top:4px"><b>${esc(ask)}</b></div>${note?`<div class="small muted" style="margin-top:2px">${esc(note)}</div>`:''}<div class="row-actions" style="justify-content:flex-start;margin-top:8px">${btns}</div></div>`;
   if(r.documents.length) html += `<h3>Files (${r.documents.length})</h3>` + r.documents.map(d => card('File', d.title, fdate(d.doc_date),
