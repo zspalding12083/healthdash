@@ -15,7 +15,7 @@ import threading
 import time
 import traceback
 
-from . import classify, doctor
+from . import classify, codes, doctor
 from .extract import extract_file
 from .store import ValidationError, now
 
@@ -77,7 +77,8 @@ class Uploads:
                                   ('labnames', 'labnames_version', LABNAMES_VERSION),  # one name per lab test
                                   ('places', 'places_version', PLACES_VERSION),        # departments saved as places
                                   ('repage', 'page_version', ccda.PAGE_VERSION),       # pages drawn by an older page()
-                                  ('vaccines', 'vaccines_version', VACCINES_VERSION)):  # summaries read before vaccines
+                                  ('vaccines', 'vaccines_version', VACCINES_VERSION),  # summaries read before vaccines
+                                  ('codes', 'codes_version', CODES_VERSION)):          # summaries read before codes
             if store.get_setting(key) != version:
                 if summaries:
                     self.q.put((job, None))
@@ -141,7 +142,7 @@ class Uploads:
                 try:
                     {'repage': self.repage, 'vaccines': self.backfill_vaccines, 'places': self.fix_places,
                      'labnames': self.tidy_lab_names, 'conditions': self.merge_conditions_once,
-                     'meds': self.merge_meds_once}[item[0]]()
+                     'meds': self.merge_meds_once, 'codes': self.backfill_codes}[item[0]]()
                 except Exception:  # noqa: BLE001 - pages stay as they were; nothing else depends on it
                     traceback.print_exc()
                 continue
@@ -364,12 +365,67 @@ class Uploads:
         self.store.set_setting('vaccines_version', VACCINES_VERSION)
         return n
 
+    def backfill_codes(self):
+        """Add the medical codes (ICD-10, SNOMED CT, CPT, ...) of problems and procedures in health
+        summaries loaded before codes were kept. Only the codes field of entries already on the
+        dashboard changes. A condition gets the codes of every problem the dashboard counts as the
+        same condition (store.condition_key: "HTN" and "Essential hypertension" are one); a procedure
+        gets the codes of a summary procedure with its name on its date, or else with a related name
+        (store.procedures_related) on the same day, give or take one. Returns how many entries got codes."""
+        from . import ccda, fhir
+        from .store import procedures_related
+        if self.store.get_setting('codes_version') == CODES_VERSION:
+            return 0
+        parsed = []
+        for d in self.store.documents():
+            if d.get('ext') not in ('.xml', '.zip') or d.get('status') != 'done':
+                continue
+            try:
+                with open(os.path.join(self.files_dir, d['id'] + d['ext']), 'rb') as f:
+                    data = f.read()
+                found = ccda.documents_in(data, d.get('orig_path') or '')
+            except (OSError, ccda.NotCCDA):
+                continue
+            for _name, xml in found:
+                try:
+                    parsed.append(ccda.parse(xml))
+                except ccda.NotCCDA:
+                    continue
+            for _name, js in ccda.zip_extras(data)['json']:
+                try:
+                    parsed.append(fhir.parse(js))
+                except fhir.NotFHIR:
+                    continue
+        key = self.store.condition_key()
+        conds, procs = {}, {}   # condition key -> codes; (name, date) -> codes
+        for doc in parsed:
+            for p in doc['problems']:
+                if p.get('codes'):
+                    conds[key(p['name'])] = codes.merge(conds.get(key(p['name'])), p['codes'])
+            for p in doc['procedures']:
+                if p.get('codes'):
+                    k = ((p['name'] or '').lower(), p.get('date'))
+                    procs[k] = codes.merge(procs.get(k), p['codes'])
+        n = 0
+        for c in self.store.list('conditions'):
+            n += self.store.add_codes('conditions', c['id'], conds.get(key(c['name'])))
+        for p in self.store.list('procedures'):
+            text = procs.get(((p['name'] or '').lower(), p.get('date')))
+            if not text and p.get('date'):
+                text = codes.merge(*[t for (name, date), t in procs.items()
+                                     if date and _days_apart(date, p['date']) <= 1 and procedures_related(name, p['name'])])
+            n += self.store.add_codes('procedures', p['id'], text)
+        self.store.set_setting('codes_version', CODES_VERSION)
+        return n
+
     def process(self, sha, reuse_text=False):
         """Read one stored file: a health summary export is imported, anything else is read for text,
         sorted and dated, with lab results taken from it."""
         d = self.store.document(sha)
         if not d:
             return
+        if d.get('ext') == '.zip' and not is_export(os.path.join(self.files_dir, sha + '.zip')):
+            return self.unpack_bundle(sha, d)
         if d.get('ext') in ('.zip', '.xml'):
             return self.import_summary(sha, d)
         if reuse_text and d.get('text'):
@@ -416,6 +472,46 @@ class Uploads:
             self.store.upsert_imported('labs', rows)
         self.store.set_upload_result(sha, status='done')   # last, once its entries are in
         return r
+
+    def unpack_bundle(self, sha, d):
+        """A zip of loose records (PDFs, scans, health summaries), not a portal export: every file in
+        it, in any folder, is added as if uploaded on its own, and read and sorted the same way. The
+        zip stays listed as one document that says what was in it."""
+        import zipfile
+        added = dup = 0
+        skipped, total = [], 0
+        with zipfile.ZipFile(os.path.join(self.files_dir, sha + '.zip')) as z:
+            members = z.infolist()
+            if len(members) > BUNDLE_MAX_FILES:
+                raise RuntimeError(f'this zip holds {len(members)} files; split it into zips of up to {BUNDLE_MAX_FILES}')
+            for i in members:
+                base = i.filename.rsplit('/', 1)[-1]
+                if i.is_dir() or not base or base.startswith('.') or '__MACOSX/' in i.filename:
+                    continue   # folders, and the hidden files Macs and Windows put in zips
+                ext = os.path.splitext(base)[1].lower()
+                if ext not in TYPES or ext == '.html' or i.file_size > BUNDLE_MAX_FILE:
+                    skipped.append(i.filename)
+                    continue
+                total += i.file_size   # what the zip says; reading stops at that size, so it can't lie bigger
+                if total > BUNDLE_MAX_TOTAL:
+                    skipped.append(i.filename + ' (the zip unpacks too big; add the rest separately)')
+                    continue
+                try:
+                    r = self.add(base, z.read(i), source='bundle')
+                except ValidationError:
+                    skipped.append(i.filename)
+                    continue
+                dup += r['duplicate']
+                added += not r['duplicate']
+        summary = (f"A zip of {added + dup + len(skipped)} files: {added} added to be read and sorted one by one"
+                   + (f", {dup} already in the records" if dup else '')
+                   + (f", {len(skipped)} left out (not a PDF, picture or health summary): "
+                      + ', '.join(os.path.basename(x) for x in skipped[:12])
+                      + (f' and {len(skipped) - 12} more' if len(skipped) > 12 else '') if skipped else '') + '.')
+        self.store.set_upload_result(sha, title=f"Zip of records ({d.get('orig_path') or 'upload'})", category='other',
+                                     status='done', needs_review=False, review_note=None, text=summary,
+                                     summary=summary, classified=classify.VERSION)
+        return {'added': added, 'duplicates': dup, 'skipped': skipped}
 
     def import_summary(self, sha, d):
         """A C-CDA health summary export: a readable page per document, plus its visits, results,
@@ -614,14 +710,17 @@ class Uploads:
         existing_c = {c['id']: c for c in self.store.list('conditions')}
         have_cond = {c['name'].lower() for c in existing_c.values() if not (c['id'] or '').startswith('ccda-')}
         cond_rows = []
+        code_links = []   # (kind, name or id, codes) for entries already on the dashboard
         for p in probs.values():
             if p['name'].lower() in have_cond:
+                code_links.append(('conditions', p['name'].lower(), p.get('codes')))
                 continue
             rid = ccda.record_ids('cond', p['name'])
             old = existing_c.get(rid) or {}
             dates = [x for x in (p.get('first_noted'), old.get('first_noted')) if x]
             cond_rows.append({'id': rid, 'docs': list(dict.fromkeys((old.get('docs') or []) + p['docs']))[:40],
-                              'name': p['name'], 'status': p['status'], 'first_noted': min(dates) if dates else None})
+                              'name': p['name'], 'status': p['status'], 'first_noted': min(dates) if dates else None,
+                              'codes': codes.merge(old.get('codes'), p.get('codes'))})
         existing_a = {a['id']: a for a in self.store.list('allergies')}
         vague = re.compile(r'^\s*(unknown|unk|not known|none|n/?a|other|see (note|comment)s?|pt cannot remember|patient (can ?not|does not) (remember|recall)|severe|moderate|mild)\s*\.?\s*$', re.I)
 
@@ -656,14 +755,18 @@ class Uploads:
             same = self.store.same_day('procedures', p['date'], days=3) if p.get('date') else []
             if same:
                 links.append(('procedures', same[0]['id'], p['docs'][0]))
+                code_links.append(('procedures', same[0]['id'], p.get('codes')))
                 continue
             pid = ccda.record_ids('proc', p['name'], p.get('date'))
             proc_rows.append({'id': pid, 'docs': p['docs'],
                               'date': p.get('date'), 'name': p['name'],
                               'facility': p.get('facility') or visit_place(p.get('date'), enc, self.store) or old_place.get(pid),
-                              'provider': p.get('provider')})
+                              'provider': p.get('provider'), 'codes': p.get('codes')})
         for kind, rid, did in links:
             self.store.link_doc(kind, rid, did)
+        by_name = {(c['name'] or '').lower(): c['id'] for c in existing_c.values()}
+        for kind, key, text in code_links:
+            self.store.add_codes(kind, by_name.get(key, key) if kind == 'conditions' else key, text)
         counts = {}
         vax_rows = vaccine_rows(self.store, imms, links)
         for kind, rows in (('encounters', enc), ('labs', lab_rows), ('medications', med_rows),
@@ -722,6 +825,40 @@ LABNAMES_VERSION = '4'  # bump when lab names are standardized differently
 PLACES_VERSION = '5'     # bump when places are read differently, so saved ones are fixed again
 
 
+BUNDLE_MAX_FILE = 200 * 1024 * 1024   # the same limit as one upload
+BUNDLE_MAX_FILES = 5000                # files in one zip of records
+BUNDLE_MAX_TOTAL = 4 * 1024 ** 3       # unpacked size of one zip of records (guards against zip bombs)
+
+
+def _days_apart(a, b):
+    """Days between two dates; a year or month alone counts from its first day. 999 if unreadable."""
+    from datetime import date
+    def d(v):
+        parts = (v or '').split('-') + ['01', '01']
+        try:
+            return date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except ValueError:
+            return None
+    x, y = d(a), d(b)
+    return abs((x - y).days) if x and y else 999
+
+
+def is_export(path):
+    """Is this zip a patient portal export (health summaries: .xml documents or a FHIR .json
+    bundle)? Otherwise it is a zip of loose records, read file by file."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = [i.filename.lower() for i in z.infolist() if not i.is_dir()]
+    except (OSError, zipfile.BadZipFile):
+        return True   # let the export reader explain what's wrong with it
+    names = [n for n in names if '__macosx/' not in n]
+    if any(n.endswith('.json') or 'ihe_xdm/' in n or n.endswith('metadata.xml') for n in names):
+        return True    # a FHIR bundle, or the standard (IHE XDM) layout portals export in
+    loose = any(n.endswith(('.pdf', '.jpg', '.jpeg', '.png', '.tif', '.tiff')) for n in names)
+    return any(n.endswith('.xml') for n in names) and not loose
+
+
 def visit_place(date, enc, store, saved=None):
     """The place of a visit on that day (new visits of this import first, then saved ones)."""
     if not date or len(date) < 10:
@@ -732,6 +869,7 @@ def visit_place(date, enc, store, saved=None):
     return None
 
 
+CODES_VERSION = '1'      # bump when medical codes are read differently, so summaries are read again
 VACCINES_VERSION = '1'   # bump when vaccines are read differently, so summaries are read again
 
 

@@ -2,6 +2,7 @@
 
   python3 -m healthdash service install|status|uninstall [--port] [--lan] [--title]   (macOS)
   python3 -m healthdash user list|add|passwd|remove [NAME] --db DB    (accounts, from a terminal)
+  python3 -m healthdash login status|on|off --db DB                     (is sign-in required? off by default)
   python3 -m healthdash wipe    --db DB --files DIR [--yes]           (empty all records; keeps accounts)
   python3 -m healthdash check   [--ingest]                             (is everything installed?)
   python3 -m healthdash demo    [--port 9380]                          (made-up sample data)
@@ -28,6 +29,8 @@ def main(argv=None):
                    help='address allowed to import/upload (repeatable)')
     s.add_argument('--title', default=None, help='name shown at the top of the page')
     s.add_argument('--host', default='0.0.0.0', help='127.0.0.1 = only this computer')
+    s.add_argument('--allow-host', action='append', default=[],
+                   help='a domain name the dashboard is opened by (repeatable); addresses and local names always work')
 
     v = sub.add_parser('service', help='macOS: run the dashboard in the background, starting at login')
     v.add_argument('action', choices=['install', 'status', 'uninstall'])
@@ -39,6 +42,10 @@ def main(argv=None):
     u.add_argument('action', choices=['list', 'add', 'passwd', 'remove'])
     u.add_argument('name', nargs='?')
     u.add_argument('--db', required=True, help='the dashboard database file')
+
+    g = sub.add_parser('login', help='turn sign-in on or off from a terminal (for example after a lost password)')
+    g.add_argument('action', choices=['status', 'on', 'off'])
+    g.add_argument('--db', required=True, help='the dashboard database file')
 
     w = sub.add_parser('wipe', help='empty every record and stored file to start over (keeps accounts)')
     w.add_argument('--db', required=True, help='the dashboard database file')
@@ -65,7 +72,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == 'serve':
         from .server import serve
-        serve(a.db, a.port, a.files, a.import_from, host=a.host, title=a.title or config.TITLE)
+        serve(a.db, a.port, a.files, a.import_from, host=a.host, title=a.title or config.TITLE, allow_hosts=a.allow_host)
     elif a.cmd == 'service':
         from . import macos
         if a.action == 'install':
@@ -73,6 +80,8 @@ def main(argv=None):
         return macos.status() if a.action == 'status' else macos.uninstall()
     elif a.cmd == 'user':
         return users_cli(a.action, a.name, a.db)
+    elif a.cmd == 'login':
+        return login_cli(a.action, a.db)
     elif a.cmd == 'wipe':
         from .wipe import wipe
         return wipe(a.db, a.files, yes=a.yes)
@@ -89,6 +98,26 @@ def main(argv=None):
         from .organize import organize
         organize(a.source, a.dest, apply=a.apply)
 
+
+
+def login_cli(action, db):
+    """Show, or turn on or off, whether the dashboard at `db` asks people to sign in. Turning it on
+    needs an account (`user add`). Takes effect at once, also while the dashboard is running."""
+    from .auth import Auth
+    from .store import Store, ValidationError
+    if not os.path.exists(db):
+        raise SystemExit(f'no database at {db}')
+    store = Store(db)
+    try:
+        auth = Auth(store)
+        if action != 'status':
+            auth.set_required(action == 'on')
+        print(f"sign-in is {'on' if auth.required() else 'off'} ({auth.count()} account{'s' if auth.count() != 1 else ''})")
+        return 0
+    except ValidationError as e:
+        raise SystemExit(f'{e}: python3 -m healthdash user add NAME --db {db}')
+    finally:
+        store.close()
 
 
 def users_cli(action, name, db):

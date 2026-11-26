@@ -81,7 +81,10 @@ def install(port=9380, lan=False, title=None):
         raise SystemExit(f'launchctl bootstrap failed: {r.stderr.strip() or r.stdout.strip()}')
     if _up(port):
         print(f'healthdash is running: http://127.0.0.1:{port}' + (' (also open to your network)' if lan else ''))
-        print('Open it and create the first account.')
+        print('Sign-in is off to start with.' + (' Since other devices can open it, turn it on under Accounts '
+                                                 '(top right): it makes the first account.' if lan else
+                                                 ' Only this Mac can open it; to require a password anyway, '
+                                                 'turn it on under Accounts (top right).'))
     else:
         print(f'Started, but it did not answer on port {port}. See the log: {LOG}')
     from .doctor import main as check

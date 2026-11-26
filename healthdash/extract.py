@@ -33,8 +33,17 @@ def sha256(path):
     return h.hexdigest()
 
 
+TOOL_TIMEOUT = 300   # seconds for one page or one file: a broken or hostile file can't stall the worker
+
+
 def _run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, check=False, **kw)
+    """Run a reading tool (pdftotext, tesseract, ...) on one file, with a time limit. Never via a
+    shell: the file's path is passed as one argument."""
+    kw.setdefault('timeout', TOOL_TIMEOUT)
+    try:
+        return subprocess.run(cmd, capture_output=True, check=False, **kw)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f'{os.path.basename(cmd[0])} took over {kw["timeout"]} seconds on this file and was stopped')
 
 
 def pdf_pages(path):

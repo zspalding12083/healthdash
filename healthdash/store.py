@@ -16,21 +16,30 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
+from . import codes
+
 # kind -> (table, fields). Every table also gets: id, docs, needs_review, edited, origin, updated
 KINDS = {
     'encounters': ['date', 'end_date', 'type', 'facility', 'provider', 'reason', 'summary'],
     'tests': ['date', 'category', 'name', 'body_part', 'facility', 'provider', 'result', 'abnormal',
               'encounter_id'],
     'labs': ['date', 'panel', 'analyte', 'value', 'num', 'unit', 'ref_range', 'flag', 'facility'],
-    'procedures': ['date', 'name', 'facility', 'provider', 'notes', 'encounter_id'],
+    'procedures': ['date', 'name', 'facility', 'provider', 'notes', 'encounter_id', 'codes'],
     'medications': ['name', 'dose', 'schedule', 'purpose', 'start_date', 'end_date', 'status',
                     'prescriber', 'notes'],
-    'conditions': ['name', 'status', 'first_noted', 'notes'],
+    'conditions': ['name', 'status', 'first_noted', 'notes', 'codes'],
     'allergies': ['substance', 'reaction', 'severity'],
     'imaging': ['date', 'modality', 'description', 'facility', 'location', 'notes'],
     'immunizations': ['date', 'name', 'product', 'lot', 'manufacturer', 'facility', 'provider', 'notes'],
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
+    # things in life that may bear on health (an accident, a death in the family, a move), entered by hand
+    'life_events': ['date', 'end_date', 'category', 'title', 'notes', 'health_effect'],
 }
+# kinds that carry medical codes (see codes.py), in their `codes` field
+CODED = {'conditions', 'procedures'}
+# what a life event can be; the dashboard offers these, any other word is kept as typed
+LIFE_CATEGORIES = ['Accident or injury', 'Family', 'Loss or grief', 'Work or school', 'Move or home',
+                   'Stress', 'Pregnancy or birth', 'Travel', 'Other']
 NUMERIC = {'num'}
 DELETED = '(deleted)'   # in the moved table: deleted on the dashboard, not moved to a person
 DROPPED = {}  # removed columns, erased on open
@@ -40,7 +49,9 @@ DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
-                       'person_edited INTEGER DEFAULT 0']}  # columns added after the first release
+                       'person_edited INTEGER DEFAULT 0'],
+         'conditions': ['codes TEXT'], 'procedures': ['codes TEXT']}  # columns added after the first release
+SAFE_ID = re.compile(r'^[\w.-]{1,128}$', re.ASCII)  # what a document id may be (normally a sha256)
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
 
 
@@ -83,6 +94,30 @@ def _combo(k):
 def _squash(name):
     """A place name for comparing: lower case, single spaces."""
     return re.sub(r'\s+', ' ', str(name or '')).strip().lower()
+
+
+def _procedure_words(n):
+    """The words of a procedure name that say what it was (abbreviations spelled out, sides and
+    filler words left out)."""
+    n = (n or '').lower()
+    for short, full in PROCEDURE_SHORT:
+        n = re.sub(short, ' ' + full + ' ', n)
+    return {w for w in re.findall(r'[a-z]{4,}', n)
+            if w not in ('left', 'right', 'with', 'lumbar', 'none', 'history', 'procedure', 'implants',
+                         'without', 'contrast', 'view', 'views', 'portable', 'bilateral', 'unilateral')}
+
+
+def procedures_related(a, b):
+    """Could two procedure names be the same procedure? (A word of one is in a word of the other.)"""
+    return any(x in y or y in x for x in _procedure_words(a) for y in _procedure_words(b))
+
+
+def _clean_condition(n):
+    """A condition name without labels like "(Confirmed)", a trailing number or "Hx of"."""
+    n = re.sub(r'\((confirmed|provisional|problem|disorder|finding|diagnosis)\)', ' ', n or '', flags=re.I)
+    n = re.sub(r'\s+\d+\s*$', '', n)
+    n = re.sub(r'^\s*hx\.? of\b', 'History of', n, flags=re.I)
+    return re.sub(r'\s+', ' ', n).strip(' ,.-')
 
 
 class ValidationError(ValueError):
@@ -297,6 +332,11 @@ class Store:
                     raise ValidationError(f'{f} must be a number')
             elif f in INTEGER:
                 out[f] = 1 if v in (1, True, '1', 'true', 'yes') else 0
+            elif f == 'codes':
+                try:
+                    out[f] = codes.normalize(str(v), kind)
+                except codes.CodeError as e:
+                    raise ValidationError(str(e))
             else:
                 v = str(v).strip()
                 if f in DATE_FIELDS and v and not DATE_RE.match(v):
@@ -434,6 +474,9 @@ class Store:
 
     def upsert_documents(self, docs):
         """Add or update documents by id; hand-edited details are kept, deleted ones stay deleted."""
+        for d in docs:   # ids end up in links and page attributes: sha256s and the like only
+            if not SAFE_ID.match(str(d.get('id') or '')):
+                raise ValidationError(f"document id {str(d.get('id'))[:40]!r}: use letters, numbers, . _ - only")
         moved = self.moved_ids('documents')
         docs = [d for d in docs if str(d.get('id')) not in moved]
         added = updated = 0
@@ -543,6 +586,23 @@ class Store:
             self.db.execute(f'UPDATE {kind} SET docs=? WHERE id=?', (json.dumps(r['docs'] + [did]), rid))
             self.db.commit()
 
+    def add_codes(self, kind, rid, text):
+        """Add medical codes from a source document to an entry, keeping the ones it has. An entry a
+        person edited only gets codes when it has none (they may have removed some on purpose).
+        Doesn't count as a person's edit. Returns True when the entry changed."""
+        if kind not in CODED or not text:
+            return False
+        r = self.get(kind, rid)
+        if not r or (r.get('edited') and r.get('codes')):
+            return False
+        new = codes.merge(r.get('codes'), text)
+        if new == r.get('codes'):
+            return False
+        with self.lock:
+            self.db.execute(f'UPDATE {kind} SET codes=? WHERE id=?', (new, rid))
+            self.db.commit()
+        return True
+
     def tidy_imported_places(self, place):
         """Imported visits saved as 'Clinic / Clinic' by older versions -> 'Clinic' (edited ones are left alone)."""
         with self.lock:
@@ -627,15 +687,7 @@ class Store:
         a day, or the same month when only the month is known, and a word of the name in common)
         is folded into the detailed entry: its documents are linked there and it is removed, so a
         later import doesn't add it again. Returns how many were merged."""
-        def words(n):
-            n = (n or '').lower()
-            for short, full in PROCEDURE_SHORT:
-                n = re.sub(short, ' ' + full + ' ', n)
-            return {w for w in re.findall(r'[a-z]{4,}', n)
-                    if w not in ('left', 'right', 'with', 'lumbar', 'none', 'history', 'procedure', 'implants',
-                                 'without', 'contrast', 'view', 'views', 'portable', 'bilateral', 'unilateral')}
-        def related(a, b):
-            return any(x in y or y in x for x in words(a) for y in words(b))
+        related = procedures_related
         merged = 0
         for r in self.list(kind):
             if not (r['id'] or '').startswith('ccda-') or r.get('edited') or not r.get('date'):
@@ -645,6 +697,7 @@ class Store:
                 continue
             for d in r['docs']:
                 self.link_doc(kind, match[0]['id'], d)
+            self.add_codes(kind, match[0]['id'], r.get('codes'))
             self.delete(kind, r['id'])
             merged += 1
         return merged
@@ -916,19 +969,11 @@ class Store:
         "(Problem)", a trailing number, capitals or "Hx of" are one. The entry kept is a hand-made
         one if there is one; it is active if any copy is, noted from the earliest real date, and
         linked to every copy's documents. Returns how many were merged."""
-        def clean(n):
-            n = re.sub(r'\((confirmed|provisional|problem|disorder|finding|diagnosis)\)', ' ', n or '', flags=re.I)
-            n = re.sub(r'\s+\d+\s*$', '', n)
-            n = re.sub(r'^\s*hx\.? of\b', 'History of', n, flags=re.I)
-            return re.sub(r'\s+', ' ', n).strip(' ,.-')
-        from .checks import learned_condition_names
-        learned = dict(json.loads(self.get_setting('condition_names') or '{}'))   # this person's own wordings
-        learned.update(learned_condition_names(self))                              # "same" answers on the Review tab
+        clean = _clean_condition
+        key = self.condition_key()
         groups = {}
         for c in self.list('conditions'):
-            std = (condition_name(clean(c['name'])) or condition_name(c['name'])
-                   or learned.get(c['name'].strip().lower()) or learned.get(clean(c['name']).lower()))
-            groups.setdefault((std or clean(c['name'])).lower(), []).append(c)
+            groups.setdefault(key(c['name']), []).append(c)
         merged = 0
         for k, rows in groups.items():
             if not k:
@@ -951,9 +996,25 @@ class Store:
                     continue
                 for x in r['docs']:
                     self.link_doc('conditions', keep['id'], x)
+                self.add_codes('conditions', keep['id'], r.get('codes'))
                 self.delete('conditions', r['id'])
                 merged += 1
         return merged
+
+    def condition_key(self):
+        """A function: condition name -> the key that names of one condition share (the same grouping
+        merge_conditions uses: labels ignored, general synonyms, this person's own wordings and the
+        "same" answers on the Review tab)."""
+        from .checks import learned_condition_names
+        learned = dict(json.loads(self.get_setting('condition_names') or '{}'))   # this person's own wordings
+        learned.update(learned_condition_names(self))                              # "same" answers on the Review tab
+
+        def key(name):
+            c = _clean_condition(name)
+            std = (condition_name(c) or condition_name(name)
+                   or learned.get((name or '').strip().lower()) or learned.get(c.lower()))
+            return (std or c).lower()
+        return key
 
     def apply_med_list(self, text, as_of, apply=False):
         """A current medication list ("Topiramate 100mg", one per line) set against the records:
@@ -1234,6 +1295,10 @@ class Store:
                 r['notes'], r['facility'], None, r['docs'])
         for r in self.list('immunizations'):
             add('immunizations', r['id'], r['date'], r['name'], r['product'], r['facility'], None, r['docs'])
+        for r in self.list('life_events'):
+            add('life_events', r['id'], r['date'], r['title'] or r['category'] or 'Life event',
+                ' · '.join(x for x in (r['category'] if r['title'] else None, r['health_effect'] or r['notes']) if x),
+                None, {'end_date': r['end_date'], 'category': r['category']}, r['docs'])
         for r in self.list('medications'):
             if r['otc'] or r['given']:
                 continue

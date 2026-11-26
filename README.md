@@ -30,6 +30,20 @@ Mac on the home network.
 
 - **Timeline**: every visit, test, procedure and medication change in date order, filterable by type,
   place and year.
+- **Life events**: add things outside medical care that may bear on health (a car accident, a fall,
+  a death or illness in the family, a move, a stressful stretch) with when it happened and how it may
+  affect health. They show on the Timeline, on their own tab and in the printed summary.
+- **Medical codes**: conditions and procedures carry their codes (ICD-10, ICD-9, SNOMED CT, CPT,
+  HCPCS, ICD-10-PCS), read from health summary exports or typed in (a code on its own is enough; its
+  system is worked out and its shape checked). Search finds an entry by its code. No code lists are
+  shipped or looked up online, so the dashboard shows codes but not their official descriptions.
+- **Printable summary**: **🖨 Summary** makes one page of what is going on and when: current
+  conditions with codes, allergies, current medicines, surgeries, life events, out-of-range lab
+  results, a dated history and past conditions and medicines. Pick the dates and sections, then
+  print it, save it as a PDF from the print window, or download it as a file that opens in any browser.
+  **🖨 Print list** on the Medications tab (also in the Summary dialog) prints just the allergies and
+  the medicines taken now, in large type with blank rows for changes: for a wallet, the fridge or a
+  new doctor's forms.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
   per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
   it would change (started, stopped, a dose that differs, one drug under two names) before saving
@@ -43,12 +57,16 @@ Mac on the home network.
 - **Lab trends**: the latest result of every test with its normal range and the change since last
   time, out-of-range results first, grouped by kind (blood counts, kidney, liver, sugar...). Click a
   test for a chart of every value, one hospital stay at a time or all years.
-- **Sign-in**: a few accounts, all equal. The first account is created on the page the first time
-  it's opened; after that, anyone signed in can add or remove accounts and reset passwords.
-  Forgot every password? `python3 -m healthdash user passwd NAME --db <database>` on the server.
+- **Sign-in (optional)**: off on a new dashboard, so anyone on your network can open it. Turn it on
+  under **👤 Accounts**, which makes the first account at the same time; after that, anyone signed in
+  can add or remove accounts, reset passwords, or turn sign-in off again. All accounts are equal.
+  Forgot every password? On the server, `python3 -m healthdash login off --db <database>` or
+  `python3 -m healthdash user passwd NAME --db <database>`.
 - **Documents**: every source file with date, kind and facility; opens the original. OCR'd text is
   searchable (SQLite FTS5).
-- **Add records**: drop PDFs or phone photos onto the page. Each one is read (OCR for scans),
+- **Add records**: drop PDFs or phone photos onto the page, pick many files or a whole folder
+  (subfolders too), or add a zip of records. Files it can't read are skipped and listed, and one card
+  shows the progress of a large batch. Each one is read (OCR for scans),
   sorted by kind, date and facility, its lab values are pulled out, and it is
   filed. Anything it isn't sure about is put to you as a question, with its best guess filled in.
   Copies of documents already filed are caught and lab values are never added twice.
@@ -98,9 +116,13 @@ Medical records are about as sensitive as data gets, so:
 
 - Python 3 standard library + SQLite only. No dependencies, no CDN, no outside API or lookup.
 - Text extraction and OCR (`pdftotext`, `tesseract`) run locally.
-- Everything needs a signed-in account. Passwords are stored as salted PBKDF2 hashes; sessions use
-  an HttpOnly, SameSite=Strict cookie; repeated wrong passwords are slowed down; changes are only
-  accepted from the dashboard's own page.
+- Sign-in is optional; when it's on, everything needs a signed-in account. Passwords are stored as
+  salted PBKDF2 hashes; sessions use an HttpOnly, SameSite=Strict cookie; repeated wrong passwords
+  are slowed down. Either way, changes are only accepted from the dashboard's own page, and the
+  dashboard only answers when opened by an address or a local name, so a website can't reach it
+  through its own domain (DNS rebinding). If it's opened by a real domain name on your network,
+  add `--allow-host that.name` to `serve`.
+- Security review: [docs/SECURITY.md](docs/SECURITY.md).
 - Without an account, only the configured ingest machine can bulk-import records or download
   backups, and the same computer can only send records in, not read them.
 - Request logging is off, so search terms don't end up in system logs.
@@ -136,7 +158,11 @@ python3 -m healthdash check
 python3 -m healthdash service install  # starts at login; http://127.0.0.1:9380
 ```
 
-- `service install --lan` lets other devices on your network open it (see the login warning above).
+Run these in this folder (where the code was downloaded or cloned). The `python3` that comes with
+the Mac (macOS offers to install the command line tools the first time) is new enough: any Python
+3.8 or newer works, as do Homebrew's and python.org's. Safari, Chrome and Firefox all work.
+
+- `service install --lan` lets other devices on your network open it: turn on sign-in first (see the login warning above).
   `--port` and `--title` change the port and the name shown on the page.
 - Data lives in `~/Library/Application Support/healthdash`, the log in `~/Library/Logs/healthdash.log`.
 - `python3 -m healthdash service status` and `service uninstall` (your data is kept).
@@ -161,8 +187,9 @@ On the server:
 1. `cp deploy/local.env.example deploy/local.env` and fill in the server login, URL and ingest IP.
 2. `deploy/install.sh` once (asks for sudo on the server), then `deploy/sync.sh push` for code
    changes, `deploy/sync.sh ingest` for new records, `deploy/sync.sh backup` for a database copy.
-3. Open the dashboard right away and create the first account: until one exists, whoever opens
-   the page first can create it.
+3. Sign-in starts off. To require it, open **👤 Accounts** and turn it on (it makes the first
+   account), or on the server run `python3 -m healthdash user add NAME --db <database>` then
+   `python3 -m healthdash login on --db <database>`.
 
 Edits made on the dashboard are kept: re-importing never overwrites a record someone changed by hand.
 
@@ -230,18 +257,20 @@ healthdash/
   fhir.py       FHIR bundle exports into the same shapes
   organize.py   sorted, renamed hard-link copy of the source folder
   ingest.py     extract -> describe -> POST to the dashboard -> upload missing files
+  codes.py      medical codes (ICD-10, SNOMED CT, CPT, ...): read, checked, written one way
+  report.py     the printable health summary
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes
   checks.py     record checks: questions on the Review tab about likely mistakes and duplicates
   people.py     several people on one dashboard
   doctor.py     `check`: what's installed and how to install what isn't
-  auth.py       accounts, password hashing, sessions, plugin keys
+  auth.py       optional sign-in: accounts, password hashing, sessions, plugin keys
   macos.py      `service`: launchd setup on a Mac
   store.py      SQLite schema, FTS search, timeline, lab series, edit tracking, tidy-up passes
   server.py     JSON API + static page
   static/index.html   the whole UI, no build step
 deploy/         Linux server: install.sh, sync.sh, add-person.sh, systemd unit
-docs/           SYSTEM.md (how it works) and screenshots
+docs/           SYSTEM.md (how it works), SECURITY.md (security review) and screenshots
 sample/         made-up demo data and an example local.json
 ```
 

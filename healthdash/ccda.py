@@ -14,6 +14,8 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 
+from . import codes
+
 N = '{urn:hl7-org:v3}'
 XSI_TYPE = '{http://www.w3.org/2001/XMLSchema-instance}type'
 MAX_MEMBERS, MAX_XML = 2000, 50 * 1024 * 1024
@@ -269,6 +271,7 @@ def parse(data):
                 st = act.find(N + 'statusCode')
                 out['problems'].append({
                     'name': name, 'first_noted': when(obs) or when(act),
+                    'codes': '; '.join(codes.from_ccda(obs.find(N + 'value'), N)) or None,
                     'status': 'resolved' if kind == 'resolved' or (st is not None and st.get('code') in ('completed', 'resolved'))
                     else 'active'})
         elif kind == 'procedures':
@@ -288,7 +291,8 @@ def parse(data):
                     name = name[:m.start()]
                 name = re.sub(r'\s+\d{1,2}$', '', name).strip(' ,;')     # table footnote numbers
                 out['procedures'].append({'name': name, 'date': date,
-                                          'provider': _t(who) or None})
+                                          'provider': _t(who) or None,
+                                          'codes': '; '.join(codes.from_ccda(proc.find(N + 'code'), N)) or None})
         elif kind == 'immunizations':
             for sa in sec.iter(N + 'substanceAdministration'):
                 if sa.get('negationInd') == 'true' or sa.get('moodCode', 'EVN') != 'EVN':

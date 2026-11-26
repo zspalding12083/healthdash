@@ -1,14 +1,18 @@
 """HTTP server and JSON API. Python stdlib only.
 
-Everything needs a signed-in account (see auth.py), except the sign-in page itself and the few
-endpoints the ingest/backup scripts use, which are allowed only from the addresses given with
---import-from. Requests that change something must come from the dashboard's own page.
+When sign-in is on (see auth.py), everything needs a signed-in account, except the sign-in page
+itself and the few endpoints the ingest/backup scripts use, which are allowed only from the
+addresses given with --import-from. When it is off, anyone who reaches the dashboard can use it.
+Either way, requests that change something must come from the dashboard's own page, and the page
+must be asked for by an address or a local name (see host_ok), so a website can't reach it
+through a look-alike domain (DNS rebinding).
 """
 
 import html
 import json
 import os
 import re
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -52,9 +56,32 @@ KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET',
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
 
 
-def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None, people=None):
+def host_ok(host, allow=()):
+    """May a request with this Host header be answered? An IP address, a name with no dots (a
+    computer on the home network), a local-only name (.local, .lan, .home.arpa, .internal,
+    .localhost, .test) or a name given with --allow-host. Anything else could be a website's own
+    domain pointed at this computer (DNS rebinding), which must not be able to read the records."""
+    import ipaddress
+    h = (host or '').strip().lower()
+    if not h:
+        return True   # HTTP/1.0 clients (and some scripts) send none; browsers always do
+    name = h[1:h.index(']')] if h.startswith('[') and ']' in h else h.rsplit(':', 1)[0] if h.count(':') == 1 else h
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    name = name.rstrip('.')
+    return ('.' not in name or name.endswith(('.local', '.lan', '.home.arpa', '.internal', '.localhost', '.test', '.home'))
+            or name in {a.strip().lower() for a in allow})
+
+
+def make_handler(store, files_dir, import_from, title='Health Records', uploads=None, auth=None, people=None,
+                 allow_hosts=()):
     """The HTTP request handler class for one dashboard: static page, JSON API, file downloads,
-    uploads and sign-in. `people` holds each person on the dashboard; requests pick one with X-Person."""
+    uploads and sign-in. `people` holds each person on the dashboard; requests pick one with X-Person.
+    `auth` is None for a dashboard with no accounts at all (the demo); otherwise sign-in is optional
+    (auth.required()). `allow_hosts` are extra names the dashboard may be opened by (see host_ok)."""
     people = people or People(store, files_dir, uploads)
     home = store
 
@@ -77,6 +104,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('X-Frame-Options', 'SAMEORIGIN')     # no other site may frame the dashboard
+            self.send_header('Referrer-Policy', 'no-referrer')    # links out never carry the page address
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -111,6 +140,12 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             m = c.get('hd_session')
             return m.value if m else None
 
+        def _login_on(self):
+            """Is sign-in required right now? (Never when the dashboard runs without accounts.)"""
+            if not hasattr(self, '_on'):
+                self._on = bool(auth) and auth.required()
+            return self._on
+
         def _key_user(self):
             h = self.headers.get('Authorization') or ''
             if not auth or not h.startswith('Bearer '):
@@ -120,7 +155,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._keyed
 
         def _user(self):
-            if not auth:
+            """Who is signed in: their user name; 'local' when sign-in is off; None when not signed in."""
+            if not self._login_on():
                 return 'local'
             if not hasattr(self, '_who'):
                 self._who = auth.session_user(self._token())
@@ -129,7 +165,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _allowed(self, method, parts):
             """May this request go ahead? Signed in: yes. A plugin key: only its routes. Not signed in:
             the page itself and the sign-in routes, plus the script routes from the ingest host."""
-            if not auth or self._user():
+            if not self._login_on() or self._user():
                 return True
             if self._key_user():
                 return parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in KEY_ROUTES and \
@@ -160,6 +196,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             parts = [p for p in u.path.split('/') if p]
             qs = {k: v[-1] for k, v in parse_qs(u.query).items()}
             try:
+                if not host_ok(self.headers.get('Host'), allow_hosts):
+                    return self._err(421, 'open the dashboard by its address (for example http://192.168.1.20:9380) '
+                                          'or start it with --allow-host NAME')
                 # a plugin key is sent on purpose, never automatically like a cookie, so the
                 # same-page rule (which stops other websites using your sign-in) doesn't apply
                 if method not in ('GET', 'HEAD') and not self._same_origin() and not self._key_user():
@@ -197,6 +236,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return self._static(parts[1])
             if parts[0] == 'file' and len(parts) == 2 and method == 'GET':
                 return self._file(parts[1], qs.get('download') == '1')
+            if parts == ['report'] and method == 'GET':
+                return self._report(qs)
             if parts[0] != 'api':
                 return self._err(404, 'not found')
             p = parts[1:]
@@ -294,19 +335,24 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
 
         def _accounts(self, method, p):
             """Sign-in and account routes; False when the path isn't one of them."""
+            on = self._login_on()
             if p == ['auth'] and method == 'GET':
-                return self._send(200, {'auth': bool(auth), 'user': (self._user() or self._key_user()) if auth else None,
-                                        'via_key': bool(auth and not self._user() and self._key_user()),
-                                        'setup_needed': bool(auth) and auth.count() == 0})
+                return self._send(200, {'auth': on, 'user': (self._user() or self._key_user()) if on else None,
+                                        'via_key': bool(on and not self._user() and self._key_user()),
+                                        'setup_needed': on and auth.count() == 0,
+                                        'can_sign_in': bool(auth), 'accounts': auth.count() if auth else 0})
             if not auth:
                 return False
             ip = self.client_address[0]
+            if p == ['login-required'] and method == 'POST':
+                return self._login_switch(self._json() or {}, ip)
             if p == ['setup'] and method == 'POST':
                 body = self._json()
                 with home.lock:
                     if auth.count():
                         return self._err(400, 'an account already exists; sign in')
                     name = auth.add_user(body.get('username'), body.get('password'))
+                    auth.set_required(True)
                 token = auth.login(name, body.get('password'), ip)
                 return self._send(200, {'user': name}, extra={'Set-Cookie': auth.cookie(token)})
             if p == ['login'] and method == 'POST':
@@ -328,7 +374,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if p == ['keys'] and method == 'GET':
                     return self._send(200, auth.keys())
                 if p == ['keys'] and method == 'POST':
-                    return self._send(201, auth.create_key(self._user(), (self._json() or {}).get('label', '')))
+                    from .auth import NO_LOGIN_OWNER
+                    return self._send(201, auth.create_key(self._user() if on else NO_LOGIN_OWNER,
+                                                           (self._json() or {}).get('label', '')))
                 if len(p) == 2 and method == 'DELETE':
                     return self._send(200, {'revoked': auth.revoke_key(p[1])})
             if p[:1] != ['users']:
@@ -349,6 +397,25 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     return self._send(200, {'changed': True}, extra={'Set-Cookie': auth.cookie(token)})
                 return self._send(200, {'changed': True})
             return self._err(404, 'not found')
+
+        def _login_switch(self, body, ip):
+            """Turn sign-in on or off from the Accounts dialog.
+
+            On: {on: true, username, password}: signs in with that account, or makes it when no
+            account has that name, then requires sign-in; this browser stays signed in.
+            Off: {on: false}: only someone signed in can do it; everyone is signed out."""
+            if body.get('on'):
+                name = (body.get('username') or '').strip().lower()
+                with home.lock:
+                    if not any(u['username'] == name for u in auth.users()):
+                        auth.add_user(name, body.get('password'))
+                token = auth.login(name, body.get('password'), ip)   # checks the password of an existing account
+                auth.set_required(True)
+                return self._send(200, {'auth': True, 'user': name}, extra={'Set-Cookie': auth.cookie(token)})
+            if self._login_on() and not self._user():
+                return self._err(401, 'please sign in')
+            auth.set_required(False)
+            return self._send(200, {'auth': False}, extra={'Set-Cookie': auth.cookie(None)})
 
         def _move(self, did, to):
             """Move a document, and the entries made only from it, to another person."""
@@ -433,6 +500,32 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     data = data[:i + 6] + READER_CSS + data[i + 6:] if i >= 0 else READER_CSS + data
             return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
 
+        def _report(self, qs):
+            """The printable health summary (report.py) for the chosen person. Options in the query:
+            from, to (dates), sections and kinds (comma lists), order=oldest, download=1; or view=meds
+            (with otc=0 to leave out over-the-counter medicines) for the quick medicines-and-allergies list."""
+            from .report import HISTORY_KINDS, SECTIONS, build
+            from .store import DATE_RE
+            start, end = (qs.get('from') or '').strip(), (qs.get('to') or '').strip()
+            for d in (start, end):
+                if d and not DATE_RE.match(d):
+                    raise ValidationError('dates must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
+            pick = lambda key, allowed: [x for x in (qs.get(key) or '').split(',') if x in allowed] or None  # noqa: E731
+            import secrets
+            nonce = secrets.token_urlsafe(16)   # only the page's own Print script may run
+            if qs.get('view') == 'meds':   # the quick list: current medicines and allergies only
+                from .report import med_list
+                page = med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0', nonce=nonce)
+            else:
+                    page = build(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
+                             qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS), nonce=nonce)
+            extra = {'Content-Security-Policy': f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'"}
+            if qs.get('download') == '1':
+                what = 'medicines-and-allergies' if qs.get('view') == 'meds' else 'health-summary'
+                fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-')
+                extra['Content-Disposition'] = f'attachment; filename="{fn}-{date.today().isoformat()}.html"'
+            return self._send(200, page.encode(), 'text/html; charset=utf-8', extra)
+
         def _static(self, name):
             """Send a file from healthdash/static."""
             if '/' in name or name.startswith('.'):
@@ -452,18 +545,20 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
     return Handler
 
 
-def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', require_login=True,
-          main_name=None):
-    """Open the database and run the dashboard on host:port until interrupted."""
+def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health Records', accounts=True,
+          main_name=None, allow_hosts=()):
+    """Open the database and run the dashboard on host:port until interrupted. With accounts=False
+    there is no sign-in at all (the demo); otherwise sign-in is optional, as saved (auth.required())."""
     os.makedirs(files_dir, exist_ok=True)
     store = Store(db_path)
     from .auth import Auth
     from .uploads import Uploads
     uploads = Uploads(store, files_dir)
-    auth = Auth(store) if require_login else None
+    auth = Auth(store) if accounts else None
     people = People(store, files_dir, uploads, state_dir=os.path.dirname(os.path.abspath(db_path)),
                     make_uploads=Uploads, main_name=main_name or _first_name(title))
-    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth, people))
+    httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth,
+                                                                people, allow_hosts))
     print(f'healthdash on http://{host}:{port}  db={db_path}  files={files_dir}', flush=True)
     try:
         httpd.serve_forever()

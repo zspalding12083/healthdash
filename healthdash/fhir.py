@@ -11,6 +11,8 @@ import json
 import re
 from collections import defaultdict
 
+from . import codes
+
 
 class NotFHIR(ValueError):
     pass
@@ -110,7 +112,8 @@ def parse(data):
     for c in R['Condition']:
         name = _cc(c.get('code'))
         if name:
-            out['problems'].append({'name': name, 'status': 'resolved' if _status(c.get('clinicalStatus')) in ('resolved', 'inactive', 'remission') else 'active',
+            out['problems'].append({'name': name, 'codes': '; '.join(codes.from_fhir(c.get('code'))) or None,
+                                    'status': 'resolved' if _status(c.get('clinicalStatus')) in ('resolved', 'inactive', 'remission') else 'active',
                                     'first_noted': _date(c.get('onsetDateTime') or c.get('recordedDate'))})
     for a in R['AllergyIntolerance']:
         name = _cc(a.get('code'))
@@ -120,7 +123,8 @@ def parse(data):
     for p in R['Procedure']:
         name = _cc(p.get('code'))
         if name:
-            out['procedures'].append({'name': name, 'date': _date(p.get('performedDateTime') or (p.get('performedPeriod') or {}).get('start'))})
+            out['procedures'].append({'name': name, 'codes': '; '.join(codes.from_fhir(p.get('code'))) or None,
+                                      'date': _date(p.get('performedDateTime') or (p.get('performedPeriod') or {}).get('start'))})
 
     for im in R['Immunization']:
         if im.get('status') in ('not-done', 'entered-in-error'):

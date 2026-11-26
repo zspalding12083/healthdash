@@ -11,21 +11,21 @@
   --bg:#f5f6f4;--panel:#fff;--ink:#1d2421;--ink2:#56605b;--ink3:#8a938e;--line:#e2e5e1;--line2:#eef0ed;
   --accent:#256c6c;--accent-soft:#e3f0ef;--warn:#a5521b;--warn-soft:#fbeee4;--bad:#b3261e;--bad-soft:#fbe9e7;
   --ok:#2f6b2f;--ok-soft:#e7f2e5;
-  --c-enc:#2f5f9e;--c-test:#7a4fa0;--c-proc:#b3261e;--c-med:#2f7a4a;--c-img:#9c6a12;--c-vax:#0e7c86;--c-fin:#6b6b6b;
+  --c-enc:#2f5f9e;--c-test:#7a4fa0;--c-proc:#b3261e;--c-med:#2f7a4a;--c-img:#9c6a12;--c-vax:#0e7c86;--c-fin:#6b6b6b;--c-life:#c2417a;
   --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
   --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
   --ok:#8fcf8a;--ok-soft:#1f3320;
-  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;--c-life:#f08ab8;
   --shadow:none;
 }}
 :root[data-theme=dark]{
   --bg:#141817;--panel:#1c2120;--ink:#e6ebe8;--ink2:#a9b3ae;--ink3:#77817c;--line:#2c3331;--line2:#232927;
   --accent:#6fbdbb;--accent-soft:#1f3534;--warn:#e19a62;--warn-soft:#3a2a1e;--bad:#f08a80;--bad-soft:#3a201d;
   --ok:#8fcf8a;--ok-soft:#1f3320;
-  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;
+  --c-enc:#79a6e0;--c-test:#bb98dc;--c-proc:#f08a80;--c-med:#7fcf98;--c-img:#e0b45c;--c-vax:#5cc8d0;--c-fin:#a0a0a0;--c-life:#f08ab8;
   --shadow:none;
 }
 *{box-sizing:border-box}
@@ -65,8 +65,15 @@ select.f{padding:5px 8px;border:1px solid var(--line);border-radius:8px;backgrou
 .ev .t{font-weight:550}
 .ev .s{color:var(--ink2);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .k-encounters{background:var(--c-enc)}.k-tests{background:var(--c-test)}.k-procedures{background:var(--c-proc)}
-.k-medications{background:var(--c-med)}.k-imaging{background:var(--c-img)}.k-immunizations{background:var(--c-vax)}.k-financial{background:var(--c-fin)}
+.k-medications{background:var(--c-med)}.k-imaging{background:var(--c-img)}.k-immunizations{background:var(--c-vax)}.k-life_events{background:var(--c-life)}.k-financial{background:var(--c-fin)}
 .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:var(--line2);color:var(--ink2);margin-left:6px;vertical-align:1px}
+.code{display:inline-block;font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--line2);color:var(--ink2);border-radius:5px;padding:0 5px;margin:1px 4px 1px 0;white-space:nowrap}
+.hint{font-size:11.5px;color:var(--ink3)}
+.prog{height:6px;background:var(--line2);border-radius:3px;margin-top:6px;overflow:hidden}.prog div{height:100%;background:var(--accent);width:0;transition:width .3s}
+.choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.choices button{text-align:left;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);cursor:pointer}
+.choices button:hover{border-color:var(--accent)}.choices b{display:block;font-size:15px;margin-bottom:3px}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:8px 10px}fieldset label{display:inline-flex!important;flex-direction:row!important;align-items:center;gap:5px;margin:3px 12px 3px 0;font-size:13px!important;color:var(--ink)!important}
 .tag.bad{background:var(--bad-soft);color:var(--bad)}.tag.ok{background:var(--ok-soft);color:var(--ok)}.tag.warn{background:var(--warn-soft);color:var(--warn)}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;font-weight:600;color:var(--ink2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
@@ -158,8 +165,10 @@ details.panel[open] summary{margin-bottom:10px}
     <div class="brand">__TITLE__<small id="span"></small></div>
     <select id="person" hidden title="Whose records"></select>
     <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
-    <button class="btn primary" id="upl" title="Add PDFs or photos of records">＋ Add records</button>
+    <button class="btn primary" id="upl" title="Add PDFs, photos, a folder or a zip of records">＋ Add records</button>
     <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.zip,.xml,application/pdf,image/*,application/zip" hidden>
+    <input type="file" id="upld" webkitdirectory multiple hidden>
+    <button class="btn" id="rep" title="A summary of the records to print or save as a PDF">🖨 Summary</button>
     <button class="btn" id="theme" title="Light / dark">◐</button>
     <button class="btn" id="acct" hidden title="Accounts and sign out"></button>
   </div>
@@ -169,37 +178,48 @@ details.panel[open] summary{margin-bottom:10px}
 <footer class="disc">Personal records, not medical advice. Sorting, scanned text and lab values are read automatically and can be wrong; the original document is the record. Provided as is, with no warranty or liability. A ZS Tech (Zachary Spalding Technology Services) project.</footer>
 
 <div class="tray" id="tray" aria-live="polite"></div>
-<div class="drop" id="drop"><div>Drop PDFs, photos or a health summary export (.zip) to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
+<div class="drop" id="drop"><div>Drop PDFs, photos, whole folders or a zip of records to add them<br><span style="font-size:15px;font-weight:400">They'll be read and filed; you'll be asked about anything unclear.</span></div></div>
 <dialog id="dlg"><div class="dlg-h"><div id="dlg-title"></div><button class="btn" id="dlg-close">Close</button></div><div class="dlg-b" id="dlg-body"></div></dialog>
 
 <script>
 'use strict';
 const TABS = [
-  ['timeline','Timeline'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
+  ['timeline','Timeline'],['life','Life events'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
   ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['vaccines','Vaccines'],['providers','Doctors'],
   ['documents','Documents'],['review','Needs review']
 ];
 const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
-  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor'};
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor',life_events:'Life event'};
 const FIELDS = {
   encounters:['date','end_date','type','facility','provider','reason','summary'],
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
   labs:['date','panel','analyte','value','num','unit','ref_range','flag','facility'],
-  procedures:['date','name','facility','provider','notes','encounter_id'],
+  procedures:['date','name','facility','provider','notes','encounter_id','codes'],
   medications:['name','dose','schedule','purpose','start_date','end_date','status','prescriber','notes'],
-  conditions:['name','status','first_noted','notes'],
+  conditions:['name','status','first_noted','notes','codes'],
   allergies:['substance','reaction','severity'],
   imaging:['date','modality','description','facility','location','notes'],
   immunizations:['date','name','product','lot','manufacturer','facility','provider','notes'],
   providers:['name','specialty','facility','phone','notes'],
+  life_events:['date','end_date','title','category','health_effect','notes'],
 };
-const LONG = new Set(['summary','result','notes','description','reason']);
-const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging','immunizations']), year:'', fac:''}};
+// field names shown on forms and record pages (otherwise the name with spaces for underscores)
+const LABELS = {end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
+const label = f => LABELS[f] || f.replace(/_/g,' ');
+// kinds of life event offered on the form (any other word can be typed); the same list as store.LIFE_CATEGORIES
+const LIFE_CATEGORIES = ['Accident or injury','Family','Loss or grief','Work or school','Move or home','Stress','Pregnancy or birth','Travel','Other'];
+// medical codes ("ICD-10-CM M54.50; CPT 22612") as small tags
+function codeTags(t){ return (t||'').split(/;\s*/).filter(Boolean).map(c => `<span class="code">${esc(c)}</span>`).join(''); }
+// the name an entry is shown by, whatever its kind
+function recName(r){ return r.name||r.title||r.reason||r.analyte||r.description||r.substance||r.payee||''; }
+const LONG = new Set(['summary','result','notes','description','reason','health_effect']);
+const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging','immunizations','life_events']), year:'', fac:''}};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = v => v == null ? '' : (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fdate(d){ if(!d) return ''; const [y,m,dd] = d.split('-'); return [dd&&+dd, m&&MON[+m-1], y].filter(Boolean).join(' '); }
+// a date for showing: '2024-03-07' -> '7 Mar 2024' (escaped: dates from an import aren't all checked)
+function fdate(d){ if(!d) return ''; const [y,m,dd] = String(d).split('-'); return esc([dd&&+dd, m&&MON[+m-1], y].filter(Boolean).join(' ')); }
 function datePlus(d){ return d ? (d.length===4? d+'-07-01' : d.length===7? d+'-15' : d) : null; }
 // whose records: sent with every request; file links carry it as ?p=
 let PERSON = 'main';
@@ -285,16 +305,17 @@ VIEWS.timeline = async (sum) => {
   </div>`;
   if(sum.last_visit) html += `<div class="panel small">Most recent visit: <a href="#" data-open="encounters|${esc(sum.last_visit.id)}">${fdate(sum.last_visit.date)}, ${esc(sum.last_visit.facility||'')}: ${esc(sum.last_visit.reason||sum.last_visit.type||'')}</a></div>`;
   html += `<div class="panel"><div class="filters">` +
-    [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Med changes'],['immunizations','Vaccines']]
+    [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Med changes'],['immunizations','Vaccines'],['life_events','Life events']]
       .map(([k,l]) => `<button class="chip ${f.kinds.has(k)?'on':''}" data-kind="${k}"><span class="dot k-${k}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px"></span>${l}</button>`).join('') +
     `<select class="f" id="f-year"><option value="">All years</option>${years.map(y=>`<option ${f.year===y?'selected':''}>${y}</option>`).join('')}</select>
      <select class="f" id="f-fac"><option value="">All places</option>${facs.map(x=>`<option ${f.fac===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
-     <span class="muted small">${shown.length} events</span></div>`;
+     <span class="muted small">${shown.length} events</span>
+     <button class="btn" data-add="life_events" style="margin-left:auto" title="An accident, a family matter or anything else that may bear on health">＋ Life event</button></div>`;
   if(!shown.length) html += '<div class="empty">Nothing matches these filters.</div>';
   let yr = '';
   for(const e of shown){
     const y = e.date.slice(0,4);
-    if(y !== yr){ yr = y; html += `<div class="tl-year">${y}</div>`; }
+    if(y !== yr){ yr = y; html += `<div class="tl-year">${esc(y)}</div>`; }
     const range = e.end_date && e.end_date !== e.date ? ` to ${fdate(e.end_date)}` : '';
     html += `<div class="ev" data-open="${e.kind}|${esc(e.id)}"><div class="d">${fdate(e.date)}</div><div class="dot k-${e.kind}"></div>
       <div><div class="t">${esc(e.title)}${e.abnormal?'<span class="tag bad">abnormal</span>':''}${range?`<span class="tag">${esc(range.trim())}</span>`:''}</div>
@@ -317,11 +338,11 @@ VIEWS.meds = async () => {
   const rx = meds.filter(m => !m.otc && !m.given);
   const current = rx.filter(m => m.status==='active' || (!m.end_date && !m.status));
   const past = rx.filter(m => !current.includes(m));
-  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><span><button class="btn" id="medlist">Paste current list</button> <button class="btn" data-add="medications">Add</button></span></div>
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Current medications (${current.length})</h2><span><button class="btn" id="medprint" title="Current medicines and allergies on one page, to print or save as a PDF">🖨 Print list</button> <button class="btn" id="medlist">Paste current list</button> <button class="btn" data-add="medications">Add</button></span></div>
     <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>When</th><th data-sort>For</th><th data-sort class="hide-sm">Since</th></tr></thead><tbody>` +
     current.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.schedule)}</td><td>${esc(m.purpose)}</td><td class="nowrap hide-sm" data-v="${esc(m.start_date||'')}">${m.start_date?fdate(m.start_date):'<span class="muted">unknown</span>'}</td></tr>`).join('') +
     `</tbody></table></div></div>`;
-  setTimeout(() => { const b = $('#medlist'); if(b) b.onclick = () => pasteMedList(); });
+  setTimeout(() => { const b = $('#medlist'); if(b) b.onclick = () => pasteMedList(); const p = $('#medprint'); if(p) p.onclick = () => printMedList(); });
   if(otc.length) html += `<div class="panel"><h2>Over the counter (${otc.length})</h2><p class="muted small" style="margin-top:-6px">Over-the-counter medicines and supplies that show up in the records. Their start and stop dates aren't tracked.</p>
     <div class="tablewrap"><table><thead><tr><th data-sort>Medication</th><th data-sort>Dose</th><th data-sort>When</th><th data-sort>For</th></tr></thead><tbody>` +
     otc.map(m => `<tr class="click" data-open="medications|${esc(m.id)}"><td><b>${esc(m.name)}</b></td><td>${esc(m.dose)}</td><td>${esc(m.schedule)}</td><td>${esc(m.purpose)}</td></tr>`).join('') +
@@ -367,8 +388,9 @@ function recordTable(kind, rows, cols, title, opts={}){
       if(f.endsWith('date') || f==='date' || f==='first_noted') return `<td class="nowrap ${cls||''}" data-v="${esc(v||'')}">${fdate(v)}</td>`;
       if(f==='charged') return `<td class="num ${cls||''}" data-v="${v??''}">${money(v)}</td>`;
       if(f==='abnormal') return `<td class="${cls||''}">${v?'<span class="tag bad">abnormal</span>':''}</td>`;
+      if(f==='codes') return `<td class="${cls||''}" data-v="${esc(v||'')}">${codeTags(v)}</td>`;
       if(f==='status') return `<td class="${cls||''}"><span class="tag ${v==='active'?'warn':v==='resolved'?'ok':''}">${esc(v||'')}</span></td>`;
-      return `<td class="${cls||''}">${f===cols[0][0]||f==='name'||f==='reason'?`<b>${esc(v)}</b>`:esc(v)}</td>`;
+      return `<td class="${cls||''}">${f===cols[0][0]||f==='name'||f==='reason'||f==='title'?`<b>${esc(v)}</b>`:esc(v)}</td>`;
     }).join('') + `<td class="nowrap">${(r.docs||[]).length?`<span class="tag" title="has source document">📄 ${(r.docs||[]).length}</span>`:''}${r.needs_review?'<span class="tag warn">review</span>':''}</td></tr>`;
   }
   return html + '</tbody></table></div></div>';
@@ -405,10 +427,16 @@ VIEWS.vaccines = async () => {
 };
 
 VIEWS.procedures = async () => recordTable('procedures', await load('procedures','/api/procedures'),
-  [['date','Date'],['name','Procedure'],['facility','Where'],['provider','Surgeon / doctor','hide-sm'],['notes','Notes','hide-sm']], 'Surgeries and procedures');
+  [['date','Date'],['name','Procedure'],['facility','Where'],['provider','Surgeon / doctor','hide-sm'],['codes','Codes','hide-sm'],['notes','Notes','hide-sm']], 'Surgeries and procedures',
+  {note:'Codes are the procedure codes the records give (CPT, HCPCS, ICD-10-PCS, SNOMED CT), or ones you add with Edit.'});
 
 VIEWS.conditions = async () => recordTable('conditions', await load('conditions','/api/conditions'),
-  [['name','Condition'],['status','Status'],['first_noted','First noted'],['notes','Notes','hide-sm']], 'Diagnoses and conditions');
+  [['name','Condition'],['status','Status'],['first_noted','First noted'],['codes','Codes','hide-sm'],['notes','Notes','hide-sm']], 'Diagnoses and conditions',
+  {note:'Codes are the diagnosis codes the records give (ICD-10, SNOMED CT), or ones you add with Edit. Search finds an entry by its code too.'});
+
+VIEWS.life = async () => recordTable('life_events', await load('life_events','/api/life_events'),
+  [['date','When'],['end_date','Until','hide-sm'],['title','What happened'],['category','Kind'],['health_effect','How it may affect health','hide-sm']], 'Life events',
+  {note:'Things outside medical care that may bear on health: a car accident, a fall, a death or illness in the family, a new job, a move, a stressful time. They show on the Timeline and in the printed summary.'});
 
 VIEWS.providers = async () => recordTable('providers', await load('providers','/api/providers'),
   [['name','Name'],['specialty','Specialty'],['facility','Practice / hospital'],['phone','Phone','hide-sm']], 'Doctors and care team');
@@ -651,7 +679,7 @@ VIEWS.review = async () => {
     const xs = r.records.filter(x => x.kind === k);
     html += `<h3>${KIND_LABEL[k]}s (${xs.length})</h3>` + xs.map(x => {
       const when = x.start_date ? `${fdate(x.start_date)} to ${x.end_date ? fdate(x.end_date) : (x.status === 'stopped' ? 'unknown' : 'now')}` : fdate(x.date || x.first_noted || '') || 'no date';
-      return card(KIND_LABEL[k], x.name||x.reason||x.analyte||x.description||x.substance||x.id, when, reviewAsk(k, x), reviewNote(x),
+      return card(KIND_LABEL[k], recName(x)||x.id, when, reviewAsk(k, x), reviewNote(x),
         `<button class="btn primary" data-ok="${k}|${esc(x.id)}">Looks right</button><button class="btn" data-fix="${k}|${esc(x.id)}">Change it</button>${(x.docs||[]).length?`<button class="btn" data-doc="${x.docs[0]}" data-date="${esc(x.date||x.start_date||x.first_noted||'')}" data-end="${esc(x.end_date||'')}">See the source</button>`:''}<button class="btn danger" data-del="${k}|${esc(x.id)}">Delete</button>`);
     }).join('');
   }
@@ -669,7 +697,7 @@ async function renderSearch(q){
   const r = await api('/api/search?q=' + encodeURIComponent(q));
   const m = $('#main');
   let html = `<div class="panel"><h2>Results for “${esc(q)}”</h2>`;
-  if(r.records.length) html += `<h3>Entries (${r.records.length})</h3>` + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(x.name||x.reason||x.analyte||x.description||x.substance||x.payee||'')}</b> <span class="muted small">${fdate(x.date||x.start_date||x.first_noted||'')} ${x.facility?'· '+esc(x.facility):''}</span>${x.result||x.summary||x.notes?`<div class="small muted">${esc((x.result||x.summary||x.notes).slice(0,200))}</div>`:''}</div>`).join('');
+  if(r.records.length) html += `<h3>Entries (${r.records.length})</h3>` + r.records.map(x => `<div class="hit" data-open="${x.kind}|${esc(x.id)}"><span class="tag">${KIND_LABEL[x.kind]}</span> <b>${esc(recName(x))}</b> <span class="muted small">${fdate(x.date||x.start_date||x.first_noted||'')} ${x.facility?'· '+esc(x.facility):''}</span>${x.result||x.summary||x.notes?`<div class="small muted">${esc((x.result||x.summary||x.notes).slice(0,200))}</div>`:''}</div>`).join('');
   if(r.documents.length) html += `<h3>Inside documents (${r.documents.length})</h3>` + r.documents.map(d => `<div class="hit" data-doc="${d.id}" data-q="${esc(q)}"><b>${esc(d.title)}</b> <span class="muted small">${fdate(d.doc_date)} ${d.facility?'· '+esc(d.facility):''}</span><div class="small">${esc(d.snippet).replace(/\[\[/g,'<mark>').replace(/\]\]/g,'</mark>')}</div></div>`).join('');
   if(!r.records.length && !r.documents.length) html += '<div class="empty">Nothing found. Try a shorter word.</div>';
   m.innerHTML = html + '</div>';
@@ -699,10 +727,11 @@ async function openRecord(kind, id){
     else if(f==='charged') v = money(v);
     else if(f==='abnormal') v = v ? 'Yes' : 'No';
     else if(f==='encounter_id') return `<div>Visit</div><div><a href="#" data-open="encounters|${esc(v)}">open the visit</a></div>`;
-    return `<div>${f.replace(/_/g,' ')}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
+    else if(f==='codes') return `<div>${label(f)}</div><div>${codeTags(v)}</div>`;
+    return `<div>${label(f)}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
   }).join('');
   const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}" data-date="${esc(r.date||r.start_date||r.first_noted||'')}" data-end="${esc(r.end_date||'')}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
-  show(`<h2>${esc(r.name||r.reason||r.analyte||r.description||r.substance||r.payee||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
+  show(`<h2>${esc(recName(r)||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
     `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
   $('#ed').onclick = () => editRecord(kind, r);
   if(r.needs_review) $('#rok').onclick = async () => { await markReviewed(kind, r.id); nextReview({rec:kind+'|'+r.id}); };
@@ -749,11 +778,14 @@ function editRecord(kind, r){
     const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','num'].includes(f) ? 'number" step="any' : 'text';
     if(f==='abnormal') return `<label>Abnormal<select name="${f}"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes</option></select></label>`;
     if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
-    if(LONG.has(f)) return `<label class="wide">${f.replace(/_/g,' ')}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
-    return `<label>${f.replace(/_/g,' ')}<input name="${f}" type="${type}" value="${esc(v)}"${f==='facility'?' list="places" autocomplete="off"':''}></label>`;
+    if(f==='category' && kind==='life_events') return `<label>Kind<input name="category" list="life-cats" value="${esc(v)}" autocomplete="off"><datalist id="life-cats">${LIFE_CATEGORIES.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></label>`;
+    if(f==='title' && kind==='life_events') return `<label class="wide">What happened<input name="title" value="${esc(v)}" placeholder="e.g. Car accident, rear-ended on the highway"></label>`;
+    if(f==='codes') return `<label class="wide">Medical codes<input name="codes" value="${esc(v)}" autocomplete="off" placeholder="${kind==='conditions'?'e.g. ICD-10 M54.50; SNOMED 279039007':'e.g. CPT 22612; HCPCS J1885'}"><span class="hint">${kind==='conditions'?'Diagnosis codes (ICD-10, ICD-9, SNOMED CT)':'Procedure codes (CPT, HCPCS, ICD-10-PCS, SNOMED CT)'}, from a bill, a visit summary or a referral. A code on its own is fine; the system is worked out from its shape. Separate several with “;”.</span></label>`;
+    if(LONG.has(f)) return `<label class="wide">${label(f)}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
+    return `<label>${label(f)}<input name="${f}" type="${type}" value="${esc(v)}"${f==='facility'?' list="places" autocomplete="off"':''}></label>`;
   }).join('');
   show(`<h2>${isNew?'Add':'Edit'} ${KIND_LABEL[kind].toLowerCase()}</h2>`,
-    `<form class="edit" id="ef">${inputs}${r.needs_review?'<label class="wide" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" name="clear_review" checked> Mark as reviewed</label>':''}</form><div class="row-actions">${isNew?'':'<button class="btn danger" id="del">Delete</button>'}<button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div><p class="muted small" id="msg"></p>`);
+    `${kind==='life_events'&&isNew?'<p class="small muted" style="margin-top:0">Anything outside medical care that may bear on health: an accident, a death or illness in the family, a new job, a move, a hard time. A year (2019) or a month (2019-06) is fine when the exact day isn\'t known.</p>':''}<form class="edit" id="ef">${inputs}${r.needs_review?'<label class="wide" style="flex-direction:row;gap:8px;align-items:center"><input type="checkbox" name="clear_review" checked> Mark as reviewed</label>':''}</form><div class="row-actions">${isNew?'':'<button class="btn danger" id="del">Delete</button>'}<button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div><p class="muted small" id="msg"></p>`);
   $('#cancel').onclick = () => isNew ? dlg.close() : openRecord(kind, r.id);
   $('#save').onclick = async () => {
     const fd = new FormData($('#ef')); const body = {};
@@ -863,13 +895,45 @@ async function nextReview(done){
 }
 
 // ---------- adding records ----------
-$('#upl').onclick = () => HEALTH.can_read ? $('#uplf').click() : showSetupHelp();
+$('#upl').onclick = () => HEALTH.can_read ? chooseUpload() : showSetupHelp();
 $('#uplf').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
+$('#upld').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
+// what the dashboard can read; anything else in a folder (programs, DICOM slices, notes) is skipped
+const OK_EXT = /\.(pdf|jpe?g|png|tiff?|zip|xml)$/i;
+const BULK_AT = 4;         // this many files or more: one progress card instead of one card per file
+const BULK_ASK = 25;       // this many or more: ask first, saying how many
+const BULK_PARALLEL = 3;   // files sent at once
+function chooseUpload(){
+  show('<h2>Add records</h2>', `<div class="choices">
+    <button id="pick-files"><b>Files</b><span class="small muted">PDFs, photos or scans, a health summary export, or a zip of records. Pick as many as you like.</span></button>
+    <button id="pick-dir"><b>A whole folder</b><span class="small muted">Everything in it and in its subfolders. Files that aren't records (programs, DICOM image slices, notes) are skipped.</span></button></div>
+    <p class="small muted">You can also drag files or whole folders onto this page. Each file is read and sorted on its own; anything unclear goes to <b>Needs review</b>. Files already in the records are noticed and not added twice.</p>`);
+  $('#pick-files').onclick = () => { dlg.close(); $('#uplf').click(); };
+  $('#pick-dir').onclick = () => { dlg.close(); $('#upld').click(); };
+}
+// every file in what was dropped, looking inside dropped folders (and their subfolders)
+async function droppedFiles(dt){
+  const entries = [...(dt.items||[])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length) return [...(dt.files||[])];
+  const out = [];
+  async function walk(en, path){
+    if(en.isFile) return new Promise(res => en.file(f => { out.push(Object.defineProperty(f, 'relPath', {value: path + f.name})); res(); }, () => res()));
+    if(!en.isDirectory) return;
+    const rd = en.createReader();
+    for(;;){   // readEntries returns a folder in batches
+      const batch = await new Promise(res => rd.readEntries(res, () => res([])));
+      if(!batch.length) break;
+      for(const b of batch) await walk(b, path + en.name + '/');
+    }
+  }
+  for(const en of entries) await walk(en, '');   // entries must be taken before the first await
+  return out;
+}
 let dragN = 0;
 addEventListener('dragenter', e => { if([...(e.dataTransfer?.types||[])].includes('Files')){ dragN++; $('#drop').classList.add('on'); } });
 addEventListener('dragleave', () => { if(--dragN <= 0){ dragN = 0; $('#drop').classList.remove('on'); } });
 addEventListener('dragover', e => e.preventDefault());
-addEventListener('drop', e => { e.preventDefault(); dragN = 0; $('#drop').classList.remove('on'); if(e.dataTransfer?.files?.length) uploadFiles([...e.dataTransfer.files]); });
+addEventListener('drop', async e => { e.preventDefault(); dragN = 0; $('#drop').classList.remove('on'); if(e.dataTransfer?.files?.length) uploadFiles(await droppedFiles(e.dataTransfer)); });
 
 function trayItem(name){
   const el = document.createElement('div'); el.className = 'item';
@@ -877,6 +941,7 @@ function trayItem(name){
   el.querySelector('.nm').textContent = name;
   $('#tray').prepend(el);
   return {
+    el,
     status(t, cls){ el.querySelector('.st').innerHTML = t; el.className = 'item ' + (cls||''); },
     actions(html){ el.querySelector('.acts').innerHTML = html; bind(el);
       el.querySelectorAll('[data-dismiss]').forEach(b => b.onclick = () => el.remove()); },
@@ -896,15 +961,36 @@ function showSetupHelp(){
     <p class="muted small">To check a new install: <code>python3 -m healthdash check</code></p>
     <div class="row-actions"><button class="btn" id="upl-anyway">Add files anyway</button><button class="btn primary" id="upl-ok">OK</button></div>`);
   $('#upl-ok').onclick = () => $('#dlg').close();
-  $('#upl-anyway').onclick = () => { $('#dlg').close(); $('#uplf').click(); };
+  $('#upl-anyway').onclick = () => { $('#dlg').close(); chooseUpload(); };
 }
+// send one file; resolves to the server's answer {id, duplicate, title, status}
+async function sendFile(f){
+  const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method:'POST', body:f, headers:{'X-Person': PERSON}});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+// files picked, dropped or found in a folder: a few get a card each, many get one progress card
 async function uploadFiles(files){
+  const where = f => f.relPath || f.webkitRelativePath || f.name;
+  const hidden = f => /(^|\/)(\.|__MACOSX\/)/.test(where(f));   // .DS_Store, ._copies, Mac zip leftovers
+  const ok = files.filter(f => OK_EXT.test(f.name) && !hidden(f));
+  const skipped = files.filter(f => !ok.includes(f));
+  if(!ok.length){
+    const t = trayItem(files.length === 1 ? files[0].name : `${files.length} files`);
+    t.status(`Nothing to add: the dashboard reads PDFs, pictures (JPG, PNG, TIFF), health summary exports (.zip, .xml) and zips of records.`, 'err');
+    return t.actions('<button class="btn" data-dismiss>OK</button>');
+  }
+  if(ok.length < BULK_AT && !skipped.length) return uploadEach(ok);
+  if(ok.length >= BULK_ASK && !confirm(`Add ${ok.length} files?` + (skipped.length ? ` ${skipped.length} other files (not PDFs, pictures or health summaries) will be skipped.` : '')
+      + ' Files already in the records are not added again.')) return;
+  bulkUpload(ok, skipped.map(where));
+}
+async function uploadEach(files){
   for(const f of files){
     const t = trayItem(f.name);
     try{
-      const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method:'POST', body:f, headers:{'X-Person': PERSON}});
-      const j = await r.json().catch(() => ({}));
-      if(!r.ok) throw new Error(j.error || r.statusText);
+      const j = await sendFile(f);
       if(j.duplicate){
         t.status(`Already in the records as <b>${esc(j.title)}</b>.`);
         t.actions(`<button class="btn" data-doc="${j.id}">Open</button><button class="btn" data-dismiss>OK</button>`);
@@ -914,6 +1000,82 @@ async function uploadFiles(files){
       watchUpload(j.id, t);
     }catch(e){ t.status(esc(e.message), 'err'); t.actions('<button class="btn" data-dismiss>OK</button>'); }
   }
+}
+// many files: send a few at a time, then wait until the server has read them all, on one card
+async function bulkUpload(files, skipped){
+  const t = trayItem(`Adding ${files.length} files`);
+  const st = {sent:0, dup:0, failed:[], ids:[]};
+  const bar = (n, of) => `<div class="prog"><div style="width:${Math.round(100*n/Math.max(1,of))}%"></div></div>`;
+  const extra = () => [st.dup && `${st.dup} already in the records`, skipped.length && `${skipped.length} skipped (not records)`,
+                       st.failed.length && `${st.failed.length} not accepted`].filter(Boolean).join(' · ');
+  const show1 = () => t.status(`Sending ${st.sent} of ${files.length}…${extra() ? '<br>' + esc(extra()) : ''}${bar(st.sent, files.length)}`);
+  show1();
+  let next = 0;
+  async function worker(){
+    while(next < files.length){
+      const f = files[next++];
+      try{ const j = await sendFile(f); j.duplicate ? st.dup++ : st.ids.push(j.id); }
+      catch(e){ st.failed.push(`${f.relPath || f.webkitRelativePath || f.name}: ${e.message}`); }
+      st.sent++; show1();
+    }
+  }
+  await Promise.all(Array.from({length: BULK_PARALLEL}, worker));
+  invalidate(); render();
+  // reading: done when none of ours (nor files found inside zips) are still being read
+  const mine = new Set(st.ids);
+  for(let i = 0; i < 2000 && st.ids.length; i++){
+    let docs; try{ docs = await api('/api/documents'); }catch(e){ await new Promise(r => setTimeout(r, 5000)); continue; }
+    const busy = docs.filter(d => d.status === 'processing').length;
+    const left = docs.filter(d => mine.has(d.id) && d.status === 'processing').length;
+    if(!busy && !left) break;
+    t.status(`Reading and sorting: ${st.ids.length - left} of ${st.ids.length} done${busy > left ? ` (${busy - left} more from inside zips)` : ''}.${extra() ? '<br>' + esc(extra()) : ''}${bar(st.ids.length - left, st.ids.length)}`);
+    await new Promise(r => setTimeout(r, 4000));
+  }
+  const docs = st.ids.length ? await api('/api/documents').catch(() => []) : [];
+  const ours = docs.filter(d => mine.has(d.id));
+  const ask = ours.filter(d => d.needs_review && d.status !== 'error').length, bad = ours.filter(d => d.status === 'error').length;
+  const filed = ours.length - ask - bad;
+  invalidate(); render();
+  t.status(`<b>Done.</b> ${[`${filed} filed`, ask && `${ask} need your help`, bad && `${bad} couldn't be read`].filter(Boolean).join(' · ')}${extra() ? '<br>' + esc(extra()) : ''}`, ask || bad ? 'ask' : '');
+  const details = [...st.failed, ...skipped.slice(0, 200).map(x => x + ': skipped, not a PDF, picture or health summary')];
+  t.actions(`${ask || bad ? '<button class="btn primary" data-go-review>Needs review</button>' : ''}${details.length ? '<button class="btn" data-details>What was left out</button>' : ''}<button class="btn" data-dismiss>OK</button>`);
+  const g = t.el.querySelector('[data-go-review]'); if(g) g.onclick = () => go('review');
+  const dt = t.el.querySelector('[data-details]');
+  if(dt) dt.onclick = () => show('<h2>Left out of the import</h2>', `<pre class="doctext">${esc(details.join('\n'))}${skipped.length > 200 ? `\n…and ${skipped.length - 200} more` : ''}</pre>`);
+}
+
+// ---------- printable summary ----------
+const REPORT_SECTIONS = [['overview','Current conditions, allergies and medications'],['procedures','Surgeries and procedures'],['life','Life events'],
+  ['labs','Lab results outside the normal range'],['history','Dated history'],['past','Past conditions and medications']];
+const REPORT_KINDS = [['encounters','Visits'],['tests','Tests'],['imaging','Imaging'],['procedures','Procedures'],['medications','Medication changes'],['immunizations','Vaccines'],['life_events','Life events']];
+$('#rep').onclick = () => openReport();
+// the quick printout of current medicines and allergies (report.med_list), in a new tab
+function printMedList(otc=true){ window.open(`/report?view=meds&p=${encodeURIComponent(PERSON)}${otc?'':'&otc=0'}`, '_blank'); }
+function openReport(){
+  const box = (name, [v, l], on=true) => `<label><input type="checkbox" name="${name}" value="${v}" ${on?'checked':''}> ${esc(l)}</label>`;
+  show('<h2>Health summary to print</h2>', `<div class="ask-box" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>Just the medicines and allergies?</b> A one-page list of what's taken now, for a wallet, the fridge or a new doctor's form.</span>
+      <span><button class="btn primary" id="rmeds">Print medicines &amp; allergies</button> <label class="small"><input type="checkbox" id="rotc" checked> with over the counter</label></span></div>
+    <p class="small muted" style="margin-top:0">Or the full summary: one page (as long as it needs) of what is going on and when: for a new doctor, a specialist or your own files. It opens in a new tab to print or <b>save as a PDF</b> from the print window, or download it as a file that opens in any browser.</p>
+    <form class="edit" id="rf">
+      <label>From<input name="from" placeholder="YYYY, YYYY-MM or YYYY-MM-DD"><span class="hint">Leave empty for everything</span></label>
+      <label>To<input name="to" placeholder="YYYY, YYYY-MM or YYYY-MM-DD"></label>
+      <label>History order<select name="order"><option value="">Newest first</option><option value="oldest">Oldest first</option></select></label>
+      <fieldset class="wide"><legend class="small">Sections</legend>${REPORT_SECTIONS.map(x => box('sections', x)).join('')}</fieldset>
+      <fieldset class="wide"><legend class="small">The dated history lists</legend>${REPORT_KINDS.map(x => box('kinds', x, x[0] !== 'immunizations')).join('')}</fieldset>
+    </form>
+    <div class="row-actions"><button class="btn" id="rdl">Download file</button><button class="btn primary" id="ropen">Open to print</button></div><p class="muted small" id="rmsg"></p>`);
+  const url = dl => {
+    const f = new FormData($('#rf')), q = new URLSearchParams({p: PERSON});
+    for(const k of ['from','to','order']) if((f.get(k)||'').trim()) q.set(k, f.get(k).trim());
+    q.set('sections', f.getAll('sections').join(',') || 'overview'); q.set('kinds', f.getAll('kinds').join(',') || 'encounters');
+    if(dl) q.set('download', '1');
+    return '/report?' + q;
+  };
+  const bad = () => { const f = new FormData($('#rf')); const b = ['from','to'].find(k => (f.get(k)||'').trim() && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(f.get(k).trim()));
+    $('#rmsg').textContent = b ? `“${b}” must look like 2019, 2019-06 or 2019-06-30.` : ''; return b; };
+  $('#ropen').onclick = () => { if(!bad()) window.open(url(false), '_blank'); };
+  $('#rmeds').onclick = () => printMedList($('#rotc').checked);
+  $('#rdl').onclick = () => { if(bad()) return; const a = document.createElement('a'); a.href = url(true); a.download = ''; document.body.appendChild(a); a.click(); a.remove(); };
 }
 async function watchUpload(id, t){
   for(let i = 0; i < 900; i++){
@@ -945,8 +1107,9 @@ async function watchUpload(id, t){
 
 // ---------- sign in & accounts ----------
 let ME = null;
+let AUTH = {auth:false};   // from /api/auth: is sign-in on, can it be, how many accounts
 function showLogin(setup, msg){
-  $('#tabs').innerHTML = ''; $('#acct').hidden = true; $('#upl').hidden = true; $('#q').hidden = true;
+  $('#tabs').innerHTML = ''; $('#acct').hidden = true; $('#upl').hidden = true; $('#rep').hidden = true; $('#q').hidden = true;
   if(dlg.open) dlg.close();
   $('#main').innerHTML = `<div class="login"><h2>${setup?'Create the first account':'Sign in'}</h2>
     <div class="muted small">${setup?'Nobody has an account yet. The account you make here can add others; everyone has the same access.':'These are private health records.'}</div>
@@ -965,14 +1128,28 @@ function showLogin(setup, msg){
   };
   setTimeout(() => $('#lf input')?.focus());
 }
+// sign-in off: what it means, and turning it on (making the first account, or using an existing one)
+function signInOffPanel(){
+  const first = !AUTH.accounts;
+  return `<div class="ask-box"><b>Sign-in is off.</b> Anyone who can reach this dashboard on your network can see and change everything.
+    Turn it on to ask for a user name and password. ${first ? 'You make the first account here; it can add others.' : 'Use one of the existing accounts, or give a new name to make one.'}
+    Everyone with an account has the same access.</div>
+    <form class="edit" id="onf"><label>User name<input name="username" autocapitalize="none" autocomplete="username" required></label>
+    <label>Password (8+ characters)<input name="password" type="password" autocomplete="${first?'new-password':'current-password'}" required></label>
+    <label>Password again${first?'':' (for a new account)'}<input name="password2" type="password" autocomplete="new-password"></label></form>
+    <div class="row-actions"><button class="btn primary" id="turnon">Turn on sign-in</button></div><p class="muted small" id="amsg"></p>
+    <p class="muted small">Locked out later? On the server: <code>python3 -m healthdash login off --db …/health.db</code> or <code>user passwd NAME</code>. Passwords cross your home network without encryption, so this keeps casual visitors out; it is not for the open internet.</p>`;
+}
 async function openAccounts(){
-  const users = await api('/api/users');
-  show(`<h2>Accounts</h2><div class="muted small">Signed in as ${esc(ME)}. Everyone with an account can see and change everything, and manage accounts.</div>`,
-    `<div class="acct-list">${users.map(u => `<div><b>${esc(u.username)}</b><span><button class="btn" data-pw="${esc(u.username)}">Set password</button>
+  const on = AUTH.auth;
+  const users = on ? await api('/api/users') : [];
+  show(`<h2>Accounts</h2><div class="muted small">${on ? `Signed in as ${esc(ME)}. Everyone with an account can see and change everything, and manage accounts.` : 'Sign-in, the people on this dashboard and browser plugin keys.'}</div>`,
+    (on ? `<div class="acct-list">${users.map(u => `<div><b>${esc(u.username)}</b><span><button class="btn" data-pw="${esc(u.username)}">Set password</button>
       <button class="btn danger" data-rm="${esc(u.username)}" ${users.length<2?'disabled':''}>Remove</button></span></div>`).join('')}</div>
     <h3>Add someone</h3><form class="edit" id="af"><label>User name<input name="username" autocapitalize="none" required></label>
     <label>Password (8+ characters)<input name="password" type="password" autocomplete="new-password" required minlength="8"></label></form>
-    <div class="row-actions"><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>
+    <div class="row-actions"><button class="btn danger" id="turnoff" title="Let anyone on the network use the dashboard without signing in">Turn off sign-in</button><button class="btn" id="signout">Sign out</button><button class="btn primary" id="adduser">Add account</button></div><p class="muted small" id="amsg"></p>`
+    : `<h3>Sign-in</h3>${signInOffPanel()}`) + `
     <h3>People</h3><div class="muted small">Each person's records are kept apart. Switch between them with the menu at the top.</div>
     <div class="acct-list" id="peoplelist"></div>
     <form class="edit" id="pf" onsubmit="return false"><label>Add a person<input name="name" placeholder="Name" autocomplete="off"></label></form>
@@ -999,6 +1176,20 @@ async function openAccounts(){
     const label = prompt('Name for this key (which browser or computer):', 'Firefox'); if(label === null) return;
     const k = await api('/api/keys', {method:'POST', body:JSON.stringify({label})});
     $('#keyshow').innerHTML = `<div class="ask-box"><b>Copy this key now</b>; it won't be shown again.<pre class="doctext" style="user-select:all">${esc(k.key)}</pre><div class="small">Dashboard address for the plugin: <b>${esc(location.origin)}</b></div></div>`;
+  };
+  if(!on){
+    $('#turnon').onclick = async () => {
+      const b = Object.fromEntries(new FormData($('#onf')).entries());
+      if((!AUTH.accounts || b.password2) && b.password !== b.password2){ $('#amsg').textContent = "Passwords don't match."; return; }
+      try{ await api('/api/login-required', {method:'POST', body:JSON.stringify({on:true, username:b.username, password:b.password})}); location.reload(); }
+      catch(e){ $('#amsg').textContent = e.message; }
+    };
+    return;
+  }
+  $('#turnoff').onclick = async () => {
+    if(!confirm('Turn off sign-in? Anyone who can reach this dashboard on your network will be able to see and change everything, without a password. The accounts are kept, so you can turn it back on.')) return;
+    try{ await api('/api/login-required', {method:'POST', body:JSON.stringify({on:false})}); location.reload(); }
+    catch(e){ $('#amsg').textContent = e.message; }
   };
   $('#adduser').onclick = async () => {
     const b = Object.fromEntries(new FormData($('#af')).entries());
@@ -1049,8 +1240,9 @@ async function boot(){
   try{ a = await fetch('/api/auth').then(r => r.json()); }catch(e){}
   if(a.auth && a.setup_needed) return showLogin(true);
   if(a.auth && !a.user) return showLogin(false);
-  ME = a.user;
+  ME = a.user; AUTH = a;
   if(a.auth){ $('#acct').hidden = false; $('#acct').textContent = '👤 ' + a.user; }
+  else if(a.can_sign_in){ $('#acct').hidden = false; $('#acct').textContent = '👤 Accounts'; $('#acct').title = 'Sign-in is off. Accounts, people and plugin keys'; }
   await loadPeople();
   const start = location.hash.slice(1);
   if(TABS.some(t => t[0]===start)) S.tab = start;

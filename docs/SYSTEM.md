@@ -36,11 +36,13 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 | `fhir.py` | Reads FHIR bundles (some portals' "all my data" export) into the same shapes. |
 | `parsers.py` | Lab results from printouts and portal pages (several layouts, including LabCorp reports), and one name per lab test (`standard_name`, `display_name`). |
 | `classify.py` | What an uploaded document is: kind, date, place, title, amounts, and the questions to ask when unsure. |
+| `codes.py` | Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS): read from C-CDA and FHIR, checked and written one way when typed, merged when entries merge. No code tables, no lookups. |
+| `report.py` | The printable health summary (`/report`): current conditions, allergies and medicines, procedures, life events, flagged labs, a dated history and past conditions and medicines, as one self-contained page; and the quick list of allergies and current medicines (`med_list`, `/report?view=meds`). |
 | `checks.py` | Record checks: questions on the Review tab about likely mistakes (see below). |
 | `extract.py` | Text of PDFs (with OCR for scanned pages), office files, web pages, and DICOMDIR headers of imaging discs; cached by sha256. |
 | `catalog.py`, `organize.py`, `ingest.py` | The records folder: per-file details, a sorted copy, and sending everything to the dashboard. |
 | `people.py` | Several people on one dashboard, each with their own database and files. |
-| `auth.py` | Accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie) and plugin keys. |
+| `auth.py` | Optional sign-in: whether it is on, accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie) and plugin keys. |
 | `config.py` | Settings from `data/local.json`. |
 | `doctor.py`, `macos.py`, `wipe.py`, `demo.py` | `check`, the macOS service, starting over, and the sample data. |
 | `static/index.html` | The whole interface, no build step. |
@@ -53,13 +55,22 @@ One SQLite database per person (`health.db` for the first, `people/<id>/health.d
   pages were read by OCR, the full text (in an FTS5 index), `needs_review` and `person_edited`.
   Imported health summaries also get one readable page per document they contain.
 - **One table per kind of record** (`KINDS` in `store.py`): `encounters` (visits), `tests`, `labs`,
-  `procedures`, `medications`, `conditions`, `allergies`, `imaging`, `immunizations`, `providers`.
+  `procedures`, `medications`, `conditions`, `allergies`, `imaging`, `immunizations`, `providers`,
+  `life_events`.
   Every row also has `id`, `docs` (the documents it came from), `needs_review`, `edited`, `origin`
   (`import` or `manual`) and `updated`. Imported rows have stable ids (`ccda-...`), so importing
   the same file again updates instead of doubling.
 - **medications**: one row per drug per period of use; a dose change closes one row and opens the
   next. Over-the-counter medicines are a single row without dates; drugs given during a procedure
   are shown apart.
+- **codes** (on `conditions` and `procedures`): the medical codes the records give, or a person
+  types, in one text field written the same way everywhere: `ICD-10-CM M54.50; SNOMED CT 279039007`.
+  Search finds an entry by its code. When two entries merge, the kept one gets every code. Codes from
+  a document are added to an entry; a person's own codes are never replaced.
+- **life_events**: things outside medical care that may bear on health (an accident, a death or
+  illness in the family, a move, a stressful time): date (a year or month is fine), until, title,
+  kind (`LIFE_CATEGORIES` are offered, any word is kept), how it may affect health, notes. Entered by
+  hand only; shown on the Timeline, their own tab and the printed summary.
 - **moved**: entries and files deleted on the dashboard (or moved to another person), so an import
   doesn't bring them back.
 - **setting**: key/value settings, including what the record checks learned (below) and the
@@ -79,6 +90,13 @@ One SQLite database per person (`health.db` for the first, `people/<id>/health.d
    readable page plus its visit, results, medications, problems, allergies, procedures, vaccines and
    imaging reports. Things already on the dashboard (a visit entered by hand on the same day, the
    same result from another file) are linked rather than added twice.
+4. **Many files at once**: on the dashboard, **Add records** takes many files or a whole folder (its
+   subfolders too), and files or folders can be dragged onto the page. Files the dashboard can't
+   read are skipped and listed; four or more files share one progress card. A **zip of loose
+   records** (PDFs, pictures, summaries in any folders) is unpacked on the server and each file is
+   read as if added on its own (`uploads.unpack_bundle`, up to 5,000 files and 4 GB unpacked); the
+   zip stays listed with a note of what was in it. A zip is a portal export instead when it holds a
+   FHIR `.json`, the IHE XDM layout, or only `.xml` documents (`uploads.is_export`).
 
 ### Reading summaries carefully
 
@@ -88,6 +106,9 @@ One SQLite database per person (`health.db` for the first, `people/<id>/health.d
 - **Hospital departments** named as the place ("Sleep Lab Hospital", "Minor OR") at the issuing
   hospital's own street address are shown as that hospital.
 - **Procedures** listed in a summary take its place only if they were done during its visit.
+- **Codes**: a problem's codes come from its `value` element and the `translation`s under it (often
+  SNOMED CT with an ICD-10-CM translation); a procedure's from its `code` element. Code systems are
+  known by OID (`codes.OIDS`) or FHIR system URL (`codes.URLS`); others are left out.
 - **Vaccines**: one entry per vaccine per day, however many documents list it; the same shot
   recorded by two systems a day apart (one without a lot number) is kept once.
 
@@ -132,6 +153,7 @@ constant in the code to run it again.
 | `labnames_version` | `uploads.LABNAMES_VERSION` | rename saved results to the standard names and merge duplicates |
 | `conditions_version` | `uploads.CONDITIONS_VERSION` | merge saved conditions with the current synonyms |
 | `meds_version` | `uploads.MEDS_VERSION` | merge saved medications with the current drug names |
+| `codes_version` | `uploads.CODES_VERSION` | add the codes of problems and procedures in summaries loaded before codes were kept: a condition gets the codes of every problem grouped with it (`store.condition_key`, the same grouping as the merge), a procedure those of a summary procedure with its name and date, or a related name a day either side (`store.procedures_related`) |
 
 Passes are written to be safe to run twice and to leave hand-edited entries alone. Try a new one
 on a copy of a backup before deploying (`deploy/sync.sh backup`, then run the method against the
@@ -139,7 +161,7 @@ copy and compare).
 
 ## API
 
-All under `/api/`, JSON, for the signed-in user unless noted. The person is chosen with `X-Person`.
+All under `/api/`, JSON, for the signed-in user (anyone, when sign-in is off) unless noted. The person is chosen with `X-Person`.
 
 | Route | |
 |---|---|
@@ -152,16 +174,39 @@ All under `/api/`, JSON, for the signed-in user unless noted. The person is chos
 | `GET/POST people`, `PUT people/<id>` | the people on the dashboard |
 | `POST import`, `POST files/<sha>`, `GET backup`, `GET uploads`, `GET files/missing` | ingest host only |
 | `GET auth`, `POST setup`, `login`, `logout`; `keys`, `users` | sign-in and accounts |
+| `POST login-required` `{on, username, password}` / `{on: false}` | turn sign-in on (signs in with that account, or makes it) or off (only when signed in) |
 
 `GET /file/<sha>` sends a stored file (`?download=1` to save it).
 
+`GET /report` is the printable summary for the person in `?p=`. Options: `from`, `to` (YYYY,
+YYYY-MM or YYYY-MM-DD), `sections` (comma list of `overview, procedures, life, labs, history, past`),
+`kinds` (what the history lists: `encounters, tests, imaging, procedures, medications,
+immunizations, life_events`), `order=oldest`, `download=1` (the same page as an `.html` file).
+`view=meds` gives the quick list of allergies and current medicines instead (`otc=0` leaves out
+over-the-counter ones). The
+page allows no outside content and only its own Print script (a per-page nonce, also in a meta tag
+so a saved copy keeps the rule).
+
 ## Security and privacy
 
-- Every route needs a signed-in account, except the page itself and sign-in. Plugin keys can only
-  upload and list. Without an account only the configured ingest host can import or back up, and
-  the server's own machine can only send records in.
-- Changes are only accepted from the dashboard's own page; repeated wrong passwords are slowed down;
-  request logging is off.
+- **Sign-in is optional** and off on a new dashboard: anyone who reaches it on the network can use
+  it. It is turned on in the Accounts dialog (which makes the first account) or with
+  `python3 -m healthdash login on --db DB`, and off the same ways (`login off` is also the way back
+  in after a lost password, with `user passwd`). The choice is the `login_required` setting; a
+  dashboard with accounts and no saved choice (set up before sign-in was optional) keeps it on.
+- With sign-in on, every route needs a signed-in account, except the page itself and sign-in.
+  Plugin keys can only upload and list (a key made while sign-in was off stops working when it is
+  turned on). Without an account only the configured ingest host can import or back up, and the
+  server's own machine can only send records in.
+- Changes are only accepted from the dashboard's own page (the `Origin` check), and every request
+  must name the dashboard by an address, a name without dots or a local-only name (`.local`, `.lan`,
+  `.home.arpa`, ...), or one given with `serve --allow-host NAME` (`server.host_ok`): a website
+  can't point its own domain at the dashboard to read it (DNS rebinding). Responses can't be framed
+  by other sites and send no referrer. Repeated wrong passwords are slowed down; request logging is off.
+- Uploads are checked by their first bytes, stored under their sha256 and read by `pdftotext` and
+  `tesseract` (never through a shell, five minutes at most per page or file). Health summaries with
+  a DOCTYPE or entities are refused. Saved web pages are shown in a sandbox with no scripts.
+- See `docs/SECURITY.md` for the latest review: what was checked, fixed and left as known limits.
 - On Linux the service runs as its own user with `ProtectSystem=strict`, `ProtectHome` and `UMask=0077`.
 - The public copy of the code is made by `tools/export_public.sh`, which copies an allowlist and
   stops if any file contains a private term (names, places, doctors, medications and dates of care
@@ -188,3 +233,10 @@ All under `/api/`, JSON, for the signed-in user unless noted. The person is chos
   `ask`, `note`, `sides` and `answers`, added to `issues()`; handle its answers in `answer()`.
 - **A new kind of record**: add it to `KINDS` (the table is created on startup), to `FIELDS` and
   `KIND_LABEL` in `index.html`, and to the importer that fills it.
+- **A new field on an existing kind**: add it to `KINDS` and to `ADDED` in `store.py` (so existing
+  databases get the column), and to `FIELDS` in `index.html`.
+- **Another code system**: its OID in `codes.OIDS`, FHIR URL in `codes.URLS`, name in `codes.SYSTEMS`,
+  typed short forms in `codes.ALIASES` and code shape in `codes.SHAPE`; bump `CODES_VERSION` to read
+  saved summaries again.
+- **Another part of the printed summary**: a section in `report.SECTIONS` and `build()`, and its
+  checkbox in `REPORT_SECTIONS` in `index.html`.

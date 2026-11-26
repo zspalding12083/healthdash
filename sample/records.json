@@ -221,7 +221,8 @@
    "facility": "Riverside General Hospital",
    "provider": "Dr. Alex Sampleton (surgery)",
    "notes": "Uncomplicated.",
-   "encounter_id": "enc-2021-04-09-admit"
+   "encounter_id": "enc-2021-04-09-admit",
+   "codes": "CPT 44970"
   }
  ],
  "medications": [
@@ -285,19 +286,22 @@
    "id": "cond-htn",
    "name": "High blood pressure",
    "status": "active",
-   "first_noted": "2023-05"
+   "first_noted": "2023-05",
+   "codes": "ICD-10-CM I10; SNOMED CT 38341003"
   },
   {
    "id": "cond-prediabetes",
    "name": "Prediabetes",
    "status": "active",
-   "first_noted": "2023-05"
+   "first_noted": "2023-05",
+   "codes": "ICD-10-CM R73.03"
   },
   {
    "id": "cond-fibula",
    "name": "Fibula fracture (right)",
    "status": "resolved",
-   "first_noted": "2019-06-18"
+   "first_noted": "2019-06-18",
+   "codes": "ICD-10-CM S82.401A"
   }
  ],
  "allergies": [
@@ -332,6 +336,23 @@
    "specialty": "Orthopedics",
    "facility": "Maple Street Orthopedics",
    "phone": "555-0199"
+  }
+ ],
+ "life_events": [
+  {
+   "id": "life-2019-06-fall",
+   "date": "2019-06-17",
+   "title": "Fell off a ladder at home",
+   "category": "Accident or injury",
+   "health_effect": "Right ankle fracture the next day; ankle stiff in cold weather since."
+  },
+  {
+   "id": "life-2022-10-move",
+   "date": "2022-10",
+   "end_date": "2023-03",
+   "title": "Moved and changed jobs",
+   "category": "Stress",
+   "health_effect": "Poor sleep for several months; blood pressure first noted high in 2023."
   }
  ]
 }

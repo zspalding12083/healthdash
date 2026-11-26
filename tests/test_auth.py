@@ -67,7 +67,55 @@ class AuthServerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         return cookie.split(';')[0]
 
+    def test_sign_in_is_off_on_a_new_dashboard(self):
+        code, a, _ = self.call('/api/auth')
+        self.assertEqual((a['auth'], a['can_sign_in'], a['setup_needed'], a['accounts']), (False, True, False, 0))
+        self.assertEqual(self.call('/api/summary')[0], 200)
+        self.assertEqual(self.call('/api/conditions', {'name': 'x'})[0], 201)
+
+    def test_turning_sign_in_on_and_off(self):
+        code, body, cookie = self.call('/api/login-required', {'on': True, 'username': 'Ann', 'password': 'short'})
+        self.assertEqual(code, 400)                                 # too weak: nothing changes
+        self.assertFalse(self.auth.required())
+        code, body, cookie = self.call('/api/login-required', {'on': True, 'username': 'Ann', 'password': 'password1'})
+        self.assertEqual((code, body['user']), (200, 'ann'))
+        self.assertTrue(self.auth.required())
+        c = cookie.split(';')[0]
+        self.assertEqual(self.call('/api/summary')[0], 401)        # others must sign in now
+        self.assertEqual(self.call('/api/summary', cookie=c)[0], 200)
+        self.assertEqual(self.call('/api/login-required', {'on': False})[0], 401)   # not without signing in
+        code, _, gone = self.call('/api/login-required', {'on': False}, cookie=c)
+        self.assertEqual(code, 200)
+        self.assertIn('Max-Age=0', gone)
+        self.assertEqual(self.call('/api/summary')[0], 200)
+        # on again with the existing account: its password is checked
+        self.assertEqual(self.call('/api/login-required', {'on': True, 'username': 'ann', 'password': 'wrong-one'})[0], 400)
+        self.assertFalse(self.auth.required())
+
+    def test_older_dashboard_with_accounts_keeps_sign_in(self):
+        self.auth.add_user('ann', 'password1')       # accounts, no saved choice: made before sign-in was optional
+        self.assertTrue(self.auth.required())
+        self.assertEqual(self.call('/api/summary')[0], 401)
+
+    def test_plugin_key_made_without_sign_in(self):
+        code, k, _ = self.call('/api/keys', {'label': 'Firefox'})
+        self.assertEqual(code, 201)
+        self.assertEqual(self.auth.key_user(k['key']), authmod.NO_LOGIN_OWNER)
+        self.auth.add_user('ann', 'password1')
+        self.auth.set_required(True)
+        self.assertIsNone(self.auth.key_user(k['key']))            # stops working once sign-in is on
+
+    def test_look_alike_domains_are_refused(self):
+        from healthdash.server import host_ok
+        for h in ('192.168.1.20:9380', '127.0.0.1', '[::1]:9380', 'pi5:9380', 'pi5.local', 'health.home.arpa', None):
+            self.assertTrue(host_ok(h), h)
+        for h in ('evil.example.com', 'rebind.attacker.net:9380'):
+            self.assertFalse(host_ok(h), h)
+        self.assertTrue(host_ok('health.example.org', ['health.example.org']))
+        self.assertEqual(self.call('/api/summary', headers={'Host': 'evil.example.com'})[0], 421)
+
     def test_first_account_then_setup_is_closed(self):
+        self.store.set_setting('login_required', '1')    # sign-in on with no account yet (`login on` by hand)
         self.assertTrue(self.call('/api/auth')[1]['setup_needed'])
         self.assertEqual(self.call('/api/summary')[0], 401)
         code, body, cookie = self.call('/api/setup', {'username': 'Ann', 'password': 'password1'})

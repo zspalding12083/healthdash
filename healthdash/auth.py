@@ -1,4 +1,10 @@
-"""Simple sign-in: a few accounts, all with the same access.
+"""Simple sign-in: a few accounts, all with the same access. Optional.
+
+Sign-in is off on a new dashboard: anyone who can reach it on the home network can use it, as
+before accounts existed. It is turned on from the Accounts dialog (which makes the first account at
+the same time) or with `python3 -m healthdash login on --db DB`, and off again the same ways. The
+choice is kept in the database (setting `login_required`); a dashboard that has accounts but no
+saved choice (one set up before sign-in was optional) keeps requiring sign-in.
 
 Passwords are stored as salted PBKDF2-SHA256 hashes. A sign-in gives a random session token
 (kept in an HttpOnly, SameSite=Strict cookie); only its SHA-256 is stored. Repeated wrong
@@ -33,6 +39,8 @@ CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, key_hash TEXT UNIQUE N
                                      label TEXT, created TEXT, last_used TEXT);
 """
 KEY_PREFIX = 'hdk_'
+# owner of plugin keys made while sign-in is off; not a valid user name, so no account can claim them
+NO_LOGIN_OWNER = '(no sign-in)'
 
 
 def hash_password(password, salt=None, iterations=ITERATIONS):
@@ -67,6 +75,23 @@ class Auth:
         self.db.commit()
         self._fails = {}
         self._lock = threading.Lock()
+
+    # ---- is sign-in on? -------------------------------------------------------------------
+
+    def required(self):
+        """Must people sign in? The saved choice; without one, yes if any account exists."""
+        v = self.store.get_setting('login_required')
+        return v == '1' if v in ('0', '1') else self.count() > 0
+
+    def set_required(self, on):
+        """Turn sign-in on or off. On needs an account to sign in with; off signs everyone out."""
+        if on and not self.count():
+            raise ValidationError('make an account first, to sign in with')
+        with self.store.lock:
+            if not on:
+                self.db.execute('DELETE FROM sessions')
+            self.db.commit()
+        self.store.set_setting('login_required', '1' if on else '0')
 
     # ---- accounts -----------------------------------------------------------------------
 
@@ -191,12 +216,13 @@ class Auth:
         return n > 0
 
     def key_user(self, key):
-        """The account a plugin key belongs to (and note when it was last used), or None."""
+        """The account a plugin key belongs to (and note when it was last used), or None. A key made
+        while sign-in was off (or whose account was removed) only works while sign-in is off."""
         if not key or not key.startswith(KEY_PREFIX):
             return None
-        row = self.db.execute('SELECT k.id, k.username FROM api_keys k JOIN users u ON u.username=k.username '
-                              'WHERE k.key_hash=?', (_token_hash(key),)).fetchone()
-        if not row:
+        row = self.db.execute('SELECT k.id, k.username, u.username FROM api_keys k LEFT JOIN users u '
+                              'ON u.username=k.username WHERE k.key_hash=?', (_token_hash(key),)).fetchone()
+        if not row or (row[2] is None and self.required()):
             return None
         with self.store.lock:
             self.db.execute('UPDATE api_keys SET last_used=? WHERE id=?', (now(), row[0]))
