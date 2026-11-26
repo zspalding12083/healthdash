@@ -371,7 +371,10 @@ class Uploads:
         dashboard changes. A condition gets the codes of every problem the dashboard counts as the
         same condition (store.condition_key: "HTN" and "Essential hypertension" are one); a procedure
         gets the codes of a summary procedure with its name on its date, or else with a related name
-        (store.procedures_related) on the same day, give or take one. Returns how many entries got codes."""
+        (store.procedures_related) on the same day, give or take one. A medication gets the RxNorm codes
+        of summary lines with its exact name, or else of lines for the same drug (brand and generic are
+        one, store._drug_keys), keeping to those with its strength when its dose says one. Safe to run
+        again: codes are only ever added. Returns how many entries got codes."""
         from . import ccda, fhir
         from .store import procedures_related
         if self.store.get_setting('codes_version') == CODES_VERSION:
@@ -398,7 +401,14 @@ class Uploads:
                     continue
         key = self.store.condition_key()
         conds, procs = {}, {}   # condition key -> codes; (name, date) -> codes
+        drug, _, _ = self.store._drug_keys()
+        med_names, med_drugs = {}, {}   # line name -> codes; drug -> {line name: codes}
         for doc in parsed:
+            for m in doc.get('medications') or []:
+                if m.get('codes'):
+                    k = (m['name'] or '').lower()
+                    med_names[k] = codes.merge(med_names.get(k), m['codes'])
+                    med_drugs.setdefault(drug(m['name']), {})[k] = med_names[k]
             for p in doc['problems']:
                 if p.get('codes'):
                     conds[key(p['name'])] = codes.merge(conds.get(key(p['name'])), p['codes'])
@@ -415,6 +425,14 @@ class Uploads:
                 text = codes.merge(*[t for (name, date), t in procs.items()
                                      if date and _days_apart(date, p['date']) <= 1 and procedures_related(name, p['name'])])
             n += self.store.add_codes('procedures', p['id'], text)
+        for m in self.store.list('medications'):
+            text = med_names.get((m['name'] or '').lower())
+            if not text:
+                lines = med_drugs.get(drug(m['name']), {})
+                strength = re.findall(r'\d+(?:\.\d+)?', m.get('dose') or '')
+                same = {k: t for k, t in lines.items() if strength and re.search(rf'(?<![\d.]){re.escape(strength[0])}(?![\d.])', k)}
+                text = codes.merge(*(same or lines).values())
+            n += self.store.add_codes('medications', m['id'], text)
         self.store.set_setting('codes_version', CODES_VERSION)
         return n
 
@@ -593,6 +611,7 @@ class Uploads:
                 listed.add(k)
                 prev = meds.get(k)
                 meds[k] = dict(m, docs=[xsha], first=(prev or {}).get('first') or when((xsha, name, doc)),
+                               codes=codes.merge((prev or {}).get('codes'), m.get('codes')),
                                last_seen=when((xsha, name, doc)), gone=None)
             if v and listed:  # a medication that drops off a visit's (non-empty) list was stopped by then
                 for k, m in meds.items():
@@ -703,6 +722,7 @@ class Uploads:
             if re.match(r'\s*unable to find\b', name, re.I):   # the clinic's system had no name for it
                 name = 'Unnamed medicine (not in the clinic\'s drug list)'
             med_rows.append({'id': ccda.record_ids('med', m['name'], m.get('start_date')), 'docs': m['docs'],
+                             'codes': m.get('codes'),
                              'name': name, 'dose': m.get('dose'), 'schedule': m.get('schedule'),
                              'start_date': m.get('start_date') or m['first'], 'end_date': end, 'status': status,
                              'notes': notes or ('Start date is when it first appears in this export.' if not m.get('start_date') else None)})
@@ -869,7 +889,7 @@ def visit_place(date, enc, store, saved=None):
     return None
 
 
-CODES_VERSION = '1'      # bump when medical codes are read differently, so summaries are read again
+CODES_VERSION = '2'      # bump when medical codes are read differently, so summaries are read again (2: RxNorm)
 VACCINES_VERSION = '1'   # bump when vaccines are read differently, so summaries are read again
 
 

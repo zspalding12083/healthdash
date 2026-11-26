@@ -195,7 +195,7 @@ const FIELDS = {
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
   labs:['date','panel','analyte','value','num','unit','ref_range','flag','facility'],
   procedures:['date','name','facility','provider','notes','encounter_id','codes'],
-  medications:['name','dose','schedule','purpose','start_date','end_date','status','prescriber','notes'],
+  medications:['name','dose','schedule','purpose','start_date','end_date','status','prescriber','notes','codes'],
   conditions:['name','status','first_noted','notes','codes'],
   allergies:['substance','reaction','severity'],
   imaging:['date','modality','description','facility','location','notes'],
@@ -206,6 +206,10 @@ const FIELDS = {
 // field names shown on forms and record pages (otherwise the name with spaces for underscores)
 const LABELS = {end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
 const label = f => LABELS[f] || f.replace(/_/g,' ');
+// the codes field on each kind of entry: an example, and which code systems fit
+const CODE_HELP = {conditions:['e.g. ICD-10 M54.50; SNOMED 279039007', 'Diagnosis codes (ICD-10, ICD-9, SNOMED CT)'],
+  procedures:['e.g. CPT 22612; HCPCS J1885', 'Procedure codes (CPT, HCPCS, ICD-10-PCS, SNOMED CT)'],
+  medications:['e.g. RxNorm 197361', 'The RxNorm code (it names the drug, strength and form)']};
 // kinds of life event offered on the form (any other word can be typed); the same list as store.LIFE_CATEGORIES
 const LIFE_CATEGORIES = ['Accident or injury','Family','Loss or grief','Work or school','Move or home','Stress','Pregnancy or birth','Travel','Other'];
 // medical codes ("ICD-10-CM M54.50; CPT 22612") as small tags
@@ -780,7 +784,7 @@ function editRecord(kind, r){
     if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
     if(f==='category' && kind==='life_events') return `<label>Kind<input name="category" list="life-cats" value="${esc(v)}" autocomplete="off"><datalist id="life-cats">${LIFE_CATEGORIES.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></label>`;
     if(f==='title' && kind==='life_events') return `<label class="wide">What happened<input name="title" value="${esc(v)}" placeholder="e.g. Car accident, rear-ended on the highway"></label>`;
-    if(f==='codes') return `<label class="wide">Medical codes<input name="codes" value="${esc(v)}" autocomplete="off" placeholder="${kind==='conditions'?'e.g. ICD-10 M54.50; SNOMED 279039007':'e.g. CPT 22612; HCPCS J1885'}"><span class="hint">${kind==='conditions'?'Diagnosis codes (ICD-10, ICD-9, SNOMED CT)':'Procedure codes (CPT, HCPCS, ICD-10-PCS, SNOMED CT)'}, from a bill, a visit summary or a referral. A code on its own is fine; the system is worked out from its shape. Separate several with “;”.</span></label>`;
+    if(f==='codes') return `<label class="wide">Medical codes<input name="codes" value="${esc(v)}" autocomplete="off" placeholder="${CODE_HELP[kind][0]}"><span class="hint">${CODE_HELP[kind][1]}, from a bill, a visit summary, a referral or a pharmacy label. A code on its own is fine; the system is worked out from its shape. Separate several with “;”.</span></label>`;
     if(LONG.has(f)) return `<label class="wide">${label(f)}<textarea name="${f}" rows="3">${esc(v)}</textarea></label>`;
     return `<label>${label(f)}<input name="${f}" type="${type}" value="${esc(v)}"${f==='facility'?' list="places" autocomplete="off"':''}></label>`;
   }).join('');
@@ -1054,8 +1058,8 @@ function printMedList(otc=true){ window.open(`/report?view=meds&p=${encodeURICom
 function openReport(){
   const box = (name, [v, l], on=true) => `<label><input type="checkbox" name="${name}" value="${v}" ${on?'checked':''}> ${esc(l)}</label>`;
   show('<h2>Health summary to print</h2>', `<div class="ask-box" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>Just the medicines and allergies?</b> A one-page list of what's taken now, for a wallet, the fridge or a new doctor's form.</span>
-      <span><button class="btn primary" id="rmeds">Print medicines &amp; allergies</button> <label class="small"><input type="checkbox" id="rotc" checked> with over the counter</label></span></div>
-    <p class="small muted" style="margin-top:0">Or the full summary: one page (as long as it needs) of what is going on and when: for a new doctor, a specialist or your own files. It opens in a new tab to print or <b>save as a PDF</b> from the print window, or download it as a file that opens in any browser.</p>
+      <span><button class="btn primary" id="rmeds">Print medicines &amp; allergies</button> <button class="btn" id="rmedspdf">PDF</button> <label class="small"><input type="checkbox" id="rotc" checked> with over the counter</label></span></div>
+    <p class="small muted" style="margin-top:0">Or the full summary: one page (as long as it needs) of what is going on and when: for a new doctor, a specialist or your own files. It opens in a new tab to print, or download it as a <b>PDF</b> or as a web page that opens in any browser.</p>
     <form class="edit" id="rf">
       <label>From<input name="from" placeholder="YYYY, YYYY-MM or YYYY-MM-DD"><span class="hint">Leave empty for everything</span></label>
       <label>To<input name="to" placeholder="YYYY, YYYY-MM or YYYY-MM-DD"></label>
@@ -1063,19 +1067,23 @@ function openReport(){
       <fieldset class="wide"><legend class="small">Sections</legend>${REPORT_SECTIONS.map(x => box('sections', x)).join('')}</fieldset>
       <fieldset class="wide"><legend class="small">The dated history lists</legend>${REPORT_KINDS.map(x => box('kinds', x, x[0] !== 'immunizations')).join('')}</fieldset>
     </form>
-    <div class="row-actions"><button class="btn" id="rdl">Download file</button><button class="btn primary" id="ropen">Open to print</button></div><p class="muted small" id="rmsg"></p>`);
-  const url = dl => {
+    <div class="row-actions"><button class="btn" id="rdl" title="A web page file that opens in any browser">Download web page</button><button class="btn" id="rpdf">Download PDF</button><button class="btn primary" id="ropen">Open to print</button></div><p class="muted small" id="rmsg"></p>`);
+  const url = (dl, pdf) => {
     const f = new FormData($('#rf')), q = new URLSearchParams({p: PERSON});
     for(const k of ['from','to','order']) if((f.get(k)||'').trim()) q.set(k, f.get(k).trim());
     q.set('sections', f.getAll('sections').join(',') || 'overview'); q.set('kinds', f.getAll('kinds').join(',') || 'encounters');
     if(dl) q.set('download', '1');
+    if(pdf) q.set('format', 'pdf');
     return '/report?' + q;
   };
   const bad = () => { const f = new FormData($('#rf')); const b = ['from','to'].find(k => (f.get(k)||'').trim() && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(f.get(k).trim()));
     $('#rmsg').textContent = b ? `“${b}” must look like 2019, 2019-06 or 2019-06-30.` : ''; return b; };
   $('#ropen').onclick = () => { if(!bad()) window.open(url(false), '_blank'); };
   $('#rmeds').onclick = () => printMedList($('#rotc').checked);
-  $('#rdl').onclick = () => { if(bad()) return; const a = document.createElement('a'); a.href = url(true); a.download = ''; document.body.appendChild(a); a.click(); a.remove(); };
+  const save = href => { const a = document.createElement('a'); a.href = href; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); };
+  $('#rdl').onclick = () => { if(!bad()) save(url(true)); };
+  $('#rpdf').onclick = () => { if(!bad()) save(url(true, true)); };
+  $('#rmedspdf').onclick = () => save(`/report?view=meds&format=pdf&download=1&p=${encodeURIComponent(PERSON)}${$('#rotc').checked?'':'&otc=0'}`);
 }
 async function watchUpload(id, t){
   for(let i = 0; i < 900; i++){

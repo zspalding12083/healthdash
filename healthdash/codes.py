@@ -1,8 +1,10 @@
-"""Medical codes on conditions and procedures: ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS.
+"""Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS) and
+on medications (RxNorm).
 
 A record keeps its codes in one text field, written the same way everywhere:
 
-    "ICD-10-CM M54.50; SNOMED CT 279039007"
+    "ICD-10-CM M54.50; SNOMED CT 279039007"      (a condition)
+    "RxNorm 197361"                              (a medication: the RxNorm code names drug, strength and form)
 
 Codes come from health summaries (C-CDA codeSystem OIDs, FHIR coding systems) or are typed by a
 person, who may write just the code ("M54.50", "22612") or the system and code ("cpt 22612"). No
@@ -23,6 +25,7 @@ OIDS = {
     '2.16.840.1.113883.6.285': 'HCPCS',
     '2.16.840.1.113883.6.14': 'HCPCS',
     '2.16.840.1.113883.6.4': 'ICD-10-PCS',
+    '2.16.840.1.113883.6.88': 'RxNorm',
 }
 # FHIR coding.system -> name shown
 URLS = {
@@ -35,14 +38,20 @@ URLS = {
     'http://www.cms.gov/medicare/coding/medhcpcsgeninfo': 'HCPCS',
     'urn:oid:2.16.840.1.113883.6.285': 'HCPCS',
     'http://www.cms.gov/medicare/coding/icd10': 'ICD-10-PCS',
+    'http://www.nlm.nih.gov/research/umls/rxnorm': 'RxNorm',
 }
-SYSTEMS = ['ICD-10-CM', 'ICD-10', 'ICD-9-CM', 'SNOMED CT', 'CPT', 'HCPCS', 'ICD-10-PCS']
+SYSTEMS = ['ICD-10-CM', 'ICD-10', 'ICD-9-CM', 'SNOMED CT', 'CPT', 'HCPCS', 'ICD-10-PCS', 'RxNorm']
+# the systems that make sense on each kind of entry (others in a document are left out)
+FOR_KIND = {'conditions': {'ICD-10-CM', 'ICD-10', 'ICD-9-CM', 'SNOMED CT'},
+            'procedures': {'CPT', 'HCPCS', 'ICD-10-PCS', 'ICD-9-CM', 'SNOMED CT'},
+            'medications': {'RxNorm'}}
 # what a person may type for each system (lower case, spaces and dashes removed)
 ALIASES = {
     'icd10cm': 'ICD-10-CM', 'icd10': 'ICD-10-CM', 'icd': 'ICD-10-CM', 'dx': 'ICD-10-CM',
     'icd9cm': 'ICD-9-CM', 'icd9': 'ICD-9-CM',
     'snomedct': 'SNOMED CT', 'snomed': 'SNOMED CT', 'sct': 'SNOMED CT',
     'cpt': 'CPT', 'cpt4': 'CPT', 'hcpcs': 'HCPCS', 'icd10pcs': 'ICD-10-PCS', 'pcs': 'ICD-10-PCS',
+    'rxnorm': 'RxNorm', 'rxcui': 'RxNorm', 'rx': 'RxNorm',
 }
 SHAPE = {   # the form of a code in each system
     'ICD-10-CM': re.compile(r'^[A-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$'),
@@ -52,8 +61,9 @@ SHAPE = {   # the form of a code in each system
     'CPT': re.compile(r'^[0-9]{4}[0-9FTU]$'),
     'HCPCS': re.compile(r'^[A-V][0-9]{4}$'),
     'ICD-10-PCS': re.compile(r'^[0-9A-HJ-NP-Z]{7}$'),
+    'RxNorm': re.compile(r'^[0-9]{1,8}$'),
 }
-HINT = 'for example "ICD-10 M54.50" or "CPT 22612"; separate several with ";"'
+HINT = 'for example "ICD-10 M54.50", "CPT 22612" or "RxNorm 197361"; separate several with ";"'
 
 
 class CodeError(ValueError):
@@ -61,7 +71,9 @@ class CodeError(ValueError):
 
 
 def _guess(code, kind):
-    """The system of a code typed without one, from its shape and whether it's a condition."""
+    """The system of a code typed without one, from its shape and the kind of entry it's on."""
+    if kind == 'medications':
+        return 'RxNorm' if SHAPE['RxNorm'].match(code) else None
     if SHAPE['SNOMED CT'].match(code):
         return 'SNOMED CT'
     if kind == 'procedures':
@@ -92,23 +104,30 @@ def one(system, code):
     return f'{system} {code}'
 
 
-def from_ccda(el, ns):
-    """Codes on a C-CDA coded element (its own code and its translations), as 'SYSTEM CODE' strings."""
+def from_ccda(el, ns, kind=None):
+    """Codes on a C-CDA coded element (its own code and its translations), as 'SYSTEM CODE' strings;
+    with `kind`, only the systems that fit that kind of entry (FOR_KIND)."""
     out = []
     if el is None:
         return out
     for c in [el] + list(el.iterfind(ns + 'translation')):
-        s = one(OIDS.get(c.get('codeSystem') or ''), c.get('code'))
+        system = OIDS.get(c.get('codeSystem') or '')
+        if kind and system not in FOR_KIND.get(kind, SYSTEMS):
+            continue
+        s = one(system, c.get('code'))
         if s and s not in out:
             out.append(s)
     return out
 
 
-def from_fhir(cc):
-    """Codes in a FHIR CodeableConcept, as 'SYSTEM CODE' strings."""
+def from_fhir(cc, kind=None):
+    """Codes in a FHIR CodeableConcept, as 'SYSTEM CODE' strings; with `kind`, only fitting systems."""
     out = []
     for cd in (cc or {}).get('coding') or []:
-        s = one(URLS.get((cd.get('system') or '').lower().rstrip('/')), cd.get('code'))
+        system = URLS.get((cd.get('system') or '').lower().rstrip('/'))
+        if kind and system not in FOR_KIND.get(kind, SYSTEMS):
+            continue
+        s = one(system, cd.get('code'))
         if s and s not in out:
             out.append(s)
     return out

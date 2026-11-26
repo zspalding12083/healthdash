@@ -257,6 +257,7 @@ def parse(data):
                 st = sa.find(N + 'statusCode')
                 out['medications'].append({
                     'name': name, 'dose': dose, 'schedule': textref(sa) or None,
+                    'codes': '; '.join(codes.from_ccda(mat.find(N + 'code'), N, 'medications')) or None,
                     'start_date': _date(lo.get('value')) if lo is not None and lo.get('value') else None,
                     'end_date': _date(hi.get('value')) if hi is not None and hi.get('value') else None,
                     'status': st.get('code') if st is not None else None})

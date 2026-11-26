@@ -36,8 +36,9 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 | `fhir.py` | Reads FHIR bundles (some portals' "all my data" export) into the same shapes. |
 | `parsers.py` | Lab results from printouts and portal pages (several layouts, including LabCorp reports), and one name per lab test (`standard_name`, `display_name`). |
 | `classify.py` | What an uploaded document is: kind, date, place, title, amounts, and the questions to ask when unsure. |
-| `codes.py` | Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS): read from C-CDA and FHIR, checked and written one way when typed, merged when entries merge. No code tables, no lookups. |
-| `report.py` | The printable health summary (`/report`): current conditions, allergies and medicines, procedures, life events, flagged labs, a dated history and past conditions and medicines, as one self-contained page; and the quick list of allergies and current medicines (`med_list`, `/report?view=meds`). |
+| `codes.py` | Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS) and medications (RxNorm): read from C-CDA and FHIR (only the systems that fit the kind of entry, `FOR_KIND`), checked and written one way when typed, merged when entries merge. No code tables, no lookups. |
+| `report.py` | The printouts: the health summary (`summary`: current conditions, allergies and medicines, procedures, life events, flagged labs, a dated history, past conditions and medicines) and the quick list of allergies and current medicines (`med_list`). Each is built once as a list of blocks, then drawn as a self-contained HTML page (`to_html`) or a PDF. |
+| `pdf.py` | A small PDF writer (standard library only): report blocks on US Letter pages in the PDF base fonts (Helvetica), tables that continue across pages with their headings, "page N of M". Latin-1 text; common typographic characters are written plainly. |
 | `checks.py` | Record checks: questions on the Review tab about likely mistakes (see below). |
 | `extract.py` | Text of PDFs (with OCR for scanned pages), office files, web pages, and DICOMDIR headers of imaging discs; cached by sha256. |
 | `catalog.py`, `organize.py`, `ingest.py` | The records folder: per-file details, a sorted copy, and sending everything to the dashboard. |
@@ -63,8 +64,9 @@ One SQLite database per person (`health.db` for the first, `people/<id>/health.d
 - **medications**: one row per drug per period of use; a dose change closes one row and opens the
   next. Over-the-counter medicines are a single row without dates; drugs given during a procedure
   are shown apart.
-- **codes** (on `conditions` and `procedures`): the medical codes the records give, or a person
-  types, in one text field written the same way everywhere: `ICD-10-CM M54.50; SNOMED CT 279039007`.
+- **codes** (on `conditions`, `procedures` and `medications`): the medical codes the records give, or a
+  person types, in one text field written the same way everywhere: `ICD-10-CM M54.50; SNOMED CT 279039007`,
+  `RxNorm 866924` (an RxNorm code names the drug, strength and form, so a dose change is a new code).
   Search finds an entry by its code. When two entries merge, the kept one gets every code. Codes from
   a document are added to an entry; a person's own codes are never replaced.
 - **life_events**: things outside medical care that may bear on health (an accident, a death or
@@ -107,7 +109,9 @@ One SQLite database per person (`health.db` for the first, `people/<id>/health.d
   hospital's own street address are shown as that hospital.
 - **Procedures** listed in a summary take its place only if they were done during its visit.
 - **Codes**: a problem's codes come from its `value` element and the `translation`s under it (often
-  SNOMED CT with an ICD-10-CM translation); a procedure's from its `code` element. Code systems are
+  SNOMED CT with an ICD-10-CM translation); a procedure's from its `code` element; a medication's
+  RxNorm code from its `manufacturedMaterial` code (other drug vocabularies there are left out), kept
+  through the merge into one entry per drug per period. Code systems are
   known by OID (`codes.OIDS`) or FHIR system URL (`codes.URLS`); others are left out.
 - **Vaccines**: one entry per vaccine per day, however many documents list it; the same shot
   recorded by two systems a day apart (one without a lot number) is kept once.
@@ -153,7 +157,7 @@ constant in the code to run it again.
 | `labnames_version` | `uploads.LABNAMES_VERSION` | rename saved results to the standard names and merge duplicates |
 | `conditions_version` | `uploads.CONDITIONS_VERSION` | merge saved conditions with the current synonyms |
 | `meds_version` | `uploads.MEDS_VERSION` | merge saved medications with the current drug names |
-| `codes_version` | `uploads.CODES_VERSION` | add the codes of problems and procedures in summaries loaded before codes were kept: a condition gets the codes of every problem grouped with it (`store.condition_key`, the same grouping as the merge), a procedure those of a summary procedure with its name and date, or a related name a day either side (`store.procedures_related`) |
+| `codes_version` | `uploads.CODES_VERSION` | add the codes of problems, procedures and medications in summaries loaded before codes were kept: a condition gets the codes of every problem grouped with it (`store.condition_key`, the same grouping as the merge), a procedure those of a summary procedure with its name and date, or a related name a day either side (`store.procedures_related`), a medication the RxNorm codes of lines with its name, or else of the same drug and strength. Version 2 added medications; codes are only ever added, so running it again is safe. |
 
 Passes are written to be safe to run twice and to leave hand-edited entries alone. Try a new one
 on a copy of a backup before deploying (`deploy/sync.sh backup`, then run the method against the
@@ -181,9 +185,9 @@ All under `/api/`, JSON, for the signed-in user (anyone, when sign-in is off) un
 `GET /report` is the printable summary for the person in `?p=`. Options: `from`, `to` (YYYY,
 YYYY-MM or YYYY-MM-DD), `sections` (comma list of `overview, procedures, life, labs, history, past`),
 `kinds` (what the history lists: `encounters, tests, imaging, procedures, medications,
-immunizations, life_events`), `order=oldest`, `download=1` (the same page as an `.html` file).
-`view=meds` gives the quick list of allergies and current medicines instead (`otc=0` leaves out
-over-the-counter ones). The
+immunizations, life_events`), `order=oldest`, `download=1` (the same page as an `.html` file),
+`format=pdf` (a PDF instead; with `download=1` saved as a file). `view=meds` gives the quick list of
+allergies and current medicines instead (`otc=0` leaves out over-the-counter ones). The
 page allows no outside content and only its own Print script (a per-page nonce, also in a meta tag
 so a saved copy keeps the rule).
 

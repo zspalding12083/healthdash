@@ -107,6 +107,7 @@ def parse(data):
         sig = '; '.join(d.get('text') for d in m.get('dosageInstruction') or [] if d.get('text')) or None
         st = m.get('status')
         out['medications'].append({'name': name, 'start_date': start, 'end_date': end, 'schedule': sig,
+                                   'codes': '; '.join(codes.from_fhir(m.get('medicationCodeableConcept'), 'medications')) or None,
                                    'status': 'active' if st == 'active' else 'stopped' if st in ('stopped', 'completed', 'cancelled') else None})
 
     for c in R['Condition']:

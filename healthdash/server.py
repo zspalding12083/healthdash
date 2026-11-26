@@ -501,30 +501,38 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
 
         def _report(self, qs):
-            """The printable health summary (report.py) for the chosen person. Options in the query:
-            from, to (dates), sections and kinds (comma lists), order=oldest, download=1; or view=meds
-            (with otc=0 to leave out over-the-counter medicines) for the quick medicines-and-allergies list."""
-            from .report import HISTORY_KINDS, SECTIONS, build
+            """The printouts (report.py) for the chosen person. Options in the query: from, to (dates),
+            sections and kinds (comma lists), order=oldest; or view=meds (with otc=0 to leave out
+            over-the-counter medicines) for the quick medicines-and-allergies list. format=pdf gives a
+            PDF (pdf.py) instead of the page; download=1 saves either as a file."""
+            from urllib.parse import urlencode
+            from .report import HISTORY_KINDS, SECTIONS, med_list, summary, to_html
             from .store import DATE_RE
             start, end = (qs.get('from') or '').strip(), (qs.get('to') or '').strip()
             for d in (start, end):
                 if d and not DATE_RE.match(d):
                     raise ValidationError('dates must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
             pick = lambda key, allowed: [x for x in (qs.get(key) or '').split(',') if x in allowed] or None  # noqa: E731
+            meds = qs.get('view') == 'meds'
+            doc = (med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0') if meds else
+                   summary(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
+                           qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS)))
+            pdf = qs.get('format') == 'pdf'
+            what = 'medicines-and-allergies' if meds else 'health-summary'
+            fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-') + f'-{date.today().isoformat()}'
+            disp = 'attachment' if qs.get('download') == '1' else 'inline'
+            if pdf:
+                from .pdf import render
+                return self._send(200, render(doc), 'application/pdf',
+                                  {'Content-Disposition': f'{disp}; filename="{fn}.pdf"'})
             import secrets
             nonce = secrets.token_urlsafe(16)   # only the page's own Print script may run
-            if qs.get('view') == 'meds':   # the quick list: current medicines and allergies only
-                from .report import med_list
-                page = med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0', nonce=nonce)
-            else:
-                    page = build(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
-                             qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS), nonce=nonce)
+            link = None if disp == 'attachment' else '/report?' + urlencode(
+                {**{k: v for k, v in qs.items() if k != 'download'}, 'format': 'pdf', 'download': '1'})
             extra = {'Content-Security-Policy': f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'"}
-            if qs.get('download') == '1':
-                what = 'medicines-and-allergies' if qs.get('view') == 'meds' else 'health-summary'
-                fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-')
-                extra['Content-Disposition'] = f'attachment; filename="{fn}-{date.today().isoformat()}.html"'
-            return self._send(200, page.encode(), 'text/html; charset=utf-8', extra)
+            if disp == 'attachment':
+                extra['Content-Disposition'] = f'attachment; filename="{fn}.html"'
+            return self._send(200, to_html(doc, nonce, link).encode(), 'text/html; charset=utf-8', extra)
 
         def _static(self, name):
             """Send a file from healthdash/static."""

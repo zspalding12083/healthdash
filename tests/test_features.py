@@ -29,7 +29,11 @@ CODED_DOC = DOC.replace(
     b' </structuredBody>',
     b'  <component><section><code code="47519-4"/><title>Procedures</title>'
     b'   <entry><procedure><code code="29881" codeSystem="2.16.840.1.113883.6.12" displayName="Knee arthroscopy"/>'
-    b'    <effectiveTime value="20170210"/></procedure></entry></section></component>\n </structuredBody>')
+    b'    <effectiveTime value="20170210"/></procedure></entry></section></component>\n </structuredBody>'
+).replace(
+    b'<manufacturedMaterial><code><originalText><reference value="#m1"/></originalText></code>',
+    b'<manufacturedMaterial><code code="866924" codeSystem="2.16.840.1.113883.6.88"><originalText><reference value="#m1"/></originalText>'
+    b'<translation code="12345" codeSystem="2.16.840.1.113883.6.96"/></code>')
 
 
 class StoreCase(unittest.TestCase):
@@ -69,15 +73,39 @@ class CodeTests(StoreCase):
         self.assertEqual([(p['name'], p['date'], p['codes']) for p in d['procedures']],
                          [('Knee arthroscopy', '2017-02-10', 'CPT 29881')])
 
+    def test_medication_codes_are_rxnorm(self):
+        d = ccda.parse(CODED_DOC)
+        self.assertEqual(d['medications'][0]['codes'], 'RxNorm 866924')     # the SNOMED translation is left out
+        self.assertEqual(codes.normalize('197361', 'medications'), 'RxNorm 197361')
+        self.assertEqual(codes.normalize('rxcui: 197361', 'medications'), 'RxNorm 197361')
+        self.assertEqual(codes.normalize('197361', 'conditions'), 'SNOMED CT 197361')
+        with self.assertRaises(codes.CodeError):
+            codes.normalize('M54.5', 'medications')
+        m = self.store.create('medications', {'name': 'Examplol', 'codes': 'rx 866924'})
+        self.assertEqual(m['codes'], 'RxNorm 866924')
+
+    def test_merged_medication_lines_keep_their_codes(self):
+        self.store.upsert_imported('medications', [
+            {'id': 'ccda-med-1', 'name': 'Examplol 10 MG Oral Tablet', 'start_date': '2020-01-01', 'end_date': '2020-02-01',
+             'status': 'stopped', 'codes': 'RxNorm 866924'},
+            {'id': 'ccda-med-2', 'name': 'Examplol 10 MG Oral Tablet', 'start_date': '2020-02-10', 'status': 'active',
+             'codes': 'RxNorm 866924'}])
+        self.store.consolidate_meds(ccda.drug_key, ccda.record_ids)
+        (m,) = self.store.list('medications')
+        self.assertEqual(m['codes'], 'RxNorm 866924')
+
     def test_codes_read_from_fhir(self):
         b = {'resourceType': 'Bundle', 'entry': [
             {'resource': {'resourceType': 'Condition', 'code': {'text': 'Prediabetes', 'coding': [
                 {'system': 'http://hl7.org/fhir/sid/icd-10-cm', 'code': 'R7303'}]}}},
             {'resource': {'resourceType': 'Procedure', 'performedDateTime': '2017-02-10', 'code': {'text': 'Knee scope', 'coding': [
-                {'system': 'http://www.ama-assn.org/go/cpt', 'code': '29881'}]}}}]}
+                {'system': 'http://www.ama-assn.org/go/cpt', 'code': '29881'}]}}},
+            {'resource': {'resourceType': 'MedicationStatement', 'medicationCodeableConcept': {'text': 'Examplol', 'coding': [
+                {'system': 'http://www.nlm.nih.gov/research/umls/rxnorm', 'code': '866924'}]}}}]}
         f = fhir.parse(json.dumps(b).encode())
         self.assertEqual(f['problems'][0]['codes'], 'ICD-10-CM R73.03')
         self.assertEqual(f['procedures'][0]['codes'], 'CPT 29881')
+        self.assertEqual(f['medications'][0]['codes'], 'RxNorm 866924')
 
     def test_merged_conditions_keep_every_code(self):
         self.store.upsert_imported('conditions', [
@@ -125,13 +153,16 @@ class ReportTests(StoreCase):
     def test_summary_has_every_section(self):
         page = build(self.store, 'Jane Doe')
         for text in ('Health summary: Jane Doe', 'Migraine', 'ICD-10-CM G43.909', 'Sampleillin', 'Examplol',
-                     'CPT 29881', 'Moved house', 'Glucose', '3 May 2021', 'Broken wrist', 'Print or save as PDF'):
+                     'CPT 29881', 'Moved house', 'Glucose', '3 May 2021', 'Broken wrist', '>Print<'):
             self.assertIn(text, page)
         self.assertIn('Knee &lt;arthroscopy&gt;', page)       # what was typed is shown, never run
         self.assertNotIn('<arthroscopy>', page)
 
     def test_medicines_and_allergies_list(self):
-        from healthdash.report import med_list
+        from healthdash.report import med_list as doc, to_html
+
+        def med_list(store, name, otc=True):
+            return to_html(doc(store, name, otc), 'n0nce')
         self.store.create('medications', {'name': 'Samplecough syrup', 'dose': '10 ml', 'status': 'as needed'})
         self.store.create('medications', {'name': 'Oldpril', 'start_date': '2015', 'end_date': '2018', 'status': 'stopped'})
         self.store.set_otc({'words': ['samplecough']})
@@ -141,6 +172,27 @@ class ReportTests(StoreCase):
         self.assertNotIn('Oldpril', page)                     # stopped
         self.assertNotIn('Migraine', page)                    # conditions aren't on it
         self.assertNotIn('Samplecough', med_list(self.store, 'Jane Doe', otc=False))
+
+    def test_pdf_says_the_same_and_turns_pages(self):
+        import re as _re
+        import zlib
+        from healthdash import pdf
+        from healthdash.report import summary
+        for i in range(120):   # a long history: several pages
+            self.store.create('encounters', {'date': f'20{10 + i % 10}-0{1 + i % 9}-1{i % 9}', 'type': 'Office',
+                                             'reason': f'Visit number {i} \u2013 \u201cfollow\u2011up\u201d', 'facility': 'Riverside Clinic'})
+        data = pdf.render(summary(self.store, 'Jane Doe'))
+        self.assertTrue(data.startswith(b'%PDF-1.4') and data.rstrip().endswith(b'%%EOF'))
+        streams = [zlib.decompress(m) for m in _re.findall(rb'stream\n(.*?)\nendstream', data, _re.S)]
+        text = b'\n'.join(streams)
+        for t in (b'(Health summary: Jane Doe)', b'(Migraine)', b'(ICD-10-CM G43.909)', b'(Sampleillin)', b'(CPT 29881)'):
+            self.assertIn(t, text)
+        n = len(streams)
+        self.assertGreater(n, 2)
+        self.assertIn(f'page {n} of {n}'.encode(), text)
+        self.assertIn(b'Visit number 7 - "follow?up"', text)     # plain dash and quotes; unknown -> ?
+        offsets = [int(x) for x in _re.findall(rb'(\d{10}) 00000 n', data)]   # the index points at each object
+        self.assertTrue(all(data[o:].split(b' ', 1)[0].isdigit() and b' 0 obj' in data[o:o + 20] for o in offsets))
 
     def test_dates_and_sections_limit_it(self):
         page = build(self.store, 'Jane Doe', start='2020', sections=['history'])
@@ -196,6 +248,11 @@ class ServerTests(StoreCase):
         self.assertIn('nonce-', h['Content-Security-Policy'])
         _, h = self.get('/report?view=meds&download=1')
         self.assertIn('filename="medicines-and-allergies-Main-', h['Content-Disposition'])
+        self.assertIn('format=pdf', page)                    # the page links to its PDF
+        with urllib.request.urlopen(self.url + '/report?view=meds&format=pdf&download=1') as r:
+            self.assertEqual(r.headers['Content-Type'], 'application/pdf')
+            self.assertRegex(r.headers['Content-Disposition'], r'attachment; filename="medicines-and-allergies-Main-[\d-]+\.pdf"')
+            self.assertTrue(r.read().startswith(b'%PDF'))
 
     def test_codes_backfill_matches_renamed_and_merged_entries(self):
         with open(os.path.join(self.files, 'x' * 64 + '.xml'), 'wb') as f:
@@ -208,10 +265,12 @@ class ServerTests(StoreCase):
         htn = self.store.create('conditions', {'name': 'High blood pressure (hypertension)'})   # shown name
         knee = self.store.create('procedures', {'name': 'Right knee arthroscopy', 'date': '2017-02-11'})   # a day off
         other = self.store.create('procedures', {'name': 'Appendectomy', 'date': '2017-02-10'})
-        self.assertEqual(self.up.backfill_codes(), 2)
+        self.store.create('medications', {'name': 'Examplol', 'dose': '10 mg'})          # by drug and strength
+        self.assertEqual(self.up.backfill_codes(), 3)
         self.assertEqual(self.store.get('conditions', htn['id'])['codes'], 'SNOMED CT 714628002; ICD-10-CM R73.03')
         self.assertEqual(self.store.get('procedures', knee['id'])['codes'], 'CPT 29881')
         self.assertIsNone(self.store.get('procedures', other['id'])['codes'])     # not related
+        self.assertEqual(self.store.list('medications')[0]['codes'], 'RxNorm 866924')
         self.assertEqual(self.up.backfill_codes(), 0)                              # once only
 
     def test_zip_of_loose_records_is_read_file_by_file(self):

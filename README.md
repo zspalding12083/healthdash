@@ -34,16 +34,16 @@ Mac on the home network.
   a death or illness in the family, a move, a stressful stretch) with when it happened and how it may
   affect health. They show on the Timeline, on their own tab and in the printed summary.
 - **Medical codes**: conditions and procedures carry their codes (ICD-10, ICD-9, SNOMED CT, CPT,
-  HCPCS, ICD-10-PCS), read from health summary exports or typed in (a code on its own is enough; its
+  HCPCS, ICD-10-PCS) and medications their RxNorm code, read from health summary exports or typed in (a code on its own is enough; its
   system is worked out and its shape checked). Search finds an entry by its code. No code lists are
   shipped or looked up online, so the dashboard shows codes but not their official descriptions.
 - **Printable summary**: **🖨 Summary** makes one page of what is going on and when: current
   conditions with codes, allergies, current medicines, surgeries, life events, out-of-range lab
   results, a dated history and past conditions and medicines. Pick the dates and sections, then
-  print it, save it as a PDF from the print window, or download it as a file that opens in any browser.
+  print it, download it as a **PDF**, or download it as a web page that opens in any browser.
   **🖨 Print list** on the Medications tab (also in the Summary dialog) prints just the allergies and
   the medicines taken now, in large type with blank rows for changes: for a wallet, the fridge or a
-  new doctor's forms.
+  new doctor's forms. It also comes as a PDF.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
   per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
   it would change (started, stopped, a dose that differs, one drug under two names) before saving
@@ -258,7 +258,8 @@ healthdash/
   organize.py   sorted, renamed hard-link copy of the source folder
   ingest.py     extract -> describe -> POST to the dashboard -> upload missing files
   codes.py      medical codes (ICD-10, SNOMED CT, CPT, ...): read, checked, written one way
-  report.py     the printable health summary
+  report.py     the printouts: health summary, medicines and allergies (HTML or PDF)
+  pdf.py        a small PDF writer for them (standard library only)
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes
   checks.py     record checks: questions on the Review tab about likely mistakes and duplicates

@@ -26,7 +26,7 @@ KINDS = {
     'labs': ['date', 'panel', 'analyte', 'value', 'num', 'unit', 'ref_range', 'flag', 'facility'],
     'procedures': ['date', 'name', 'facility', 'provider', 'notes', 'encounter_id', 'codes'],
     'medications': ['name', 'dose', 'schedule', 'purpose', 'start_date', 'end_date', 'status',
-                    'prescriber', 'notes'],
+                    'prescriber', 'notes', 'codes'],
     'conditions': ['name', 'status', 'first_noted', 'notes', 'codes'],
     'allergies': ['substance', 'reaction', 'severity'],
     'imaging': ['date', 'modality', 'description', 'facility', 'location', 'notes'],
@@ -36,7 +36,7 @@ KINDS = {
     'life_events': ['date', 'end_date', 'category', 'title', 'notes', 'health_effect'],
 }
 # kinds that carry medical codes (see codes.py), in their `codes` field
-CODED = {'conditions', 'procedures'}
+CODED = {'conditions', 'procedures', 'medications'}
 # what a life event can be; the dashboard offers these, any other word is kept as typed
 LIFE_CATEGORIES = ['Accident or injury', 'Family', 'Loss or grief', 'Work or school', 'Move or home',
                    'Stress', 'Pregnancy or birth', 'Travel', 'Other']
@@ -50,7 +50,7 @@ DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
                        'person_edited INTEGER DEFAULT 0'],
-         'conditions': ['codes TEXT'], 'procedures': ['codes TEXT']}  # columns added after the first release
+         'conditions': ['codes TEXT'], 'procedures': ['codes TEXT'], 'medications': ['codes TEXT']}  # columns added after the first release
 SAFE_ID = re.compile(r'^[\w.-]{1,128}$', re.ASCII)  # what a document id may be (normally a sha256)
 DATE_RE = re.compile(r'^\d{4}(-\d{2}(-\d{2})?)?$')  # full date, or just year / year-month
 
@@ -826,6 +826,7 @@ class Store:
                 ends = [r['end_date'] for r in ep['rows'] if r['end_date']]
                 n = max(len(docs), len(ep['rows']))   # documents that list it (a merged entry keeps them all)
                 merged.append({'id': record_id('med', key, first), 'docs': docs[:40], 'name': last['name'],
+                               'codes': codes.merge(*[r.get('codes') for r in ep['rows']]),
                                'dose': known('dose'), 'schedule': known('schedule'), 'purpose': known('purpose'),
                                'start_date': first, 'end_date': None if active else (max(ends) if ends else last['start_date']),
                                'status': 'active' if active else 'stopped', 'prescriber': known('prescriber'),
@@ -959,6 +960,7 @@ class Store:
                 if rs <= me + timedelta(days=slack_days) and ms <= re_ + timedelta(days=slack_days):
                     for x in r['docs']:
                         self.link_doc('medications', m['id'], x)
+                    self.add_codes('medications', m['id'], r.get('codes'))
                     self.delete('medications', r['id'])
                     merged += 1
                     break
