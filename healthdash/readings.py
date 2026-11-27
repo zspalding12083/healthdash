@@ -35,6 +35,7 @@ TYPES = {
     'pain': {'label': 'Pain (0-10)', 'unit': '/10'},
 }
 MAX_ROWS = 150     # per type on the printout; the averages count them all
+MAX_PASTE = 5000   # readings saved from one paste
 TIME_RE = re.compile(r'^([01]?\d|2[0-3]):([0-5]\d)$')
 
 
@@ -168,6 +169,9 @@ def add_pasted(store, text, kind, unit=None, apply=False, today=None):
     have = {(r['type'], r['date'], r['time'] or '', r['reading'], r['reading2']) for r in store.list('readings')}
     new = [r for r in p['rows'] if (r['type'], r['date'], r['time'] or '', r['reading'], r['reading2']) not in have]
     saved = 0
+    if apply and len(new) > MAX_PASTE:
+        from .store import ValidationError
+        raise ValidationError(f'up to {MAX_PASTE} readings at a time; paste the rest separately')
     if apply:
         for r in new:
             store.create('readings', r)

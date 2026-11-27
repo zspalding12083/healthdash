@@ -1,8 +1,9 @@
 # Security review
 
-Last review: 2026-11-25 (second pass, after RxNorm codes and PDF printouts), of the whole codebase
-(server, sign-in, uploads, importers, page, deploy scripts). The first pass that day came with the
-changes that made sign-in optional and added bulk import, medical codes and the printable summary.
+Last review: 2026-11-27 (third pass), of everything added since the second: the emergency card,
+removing the browser plugin, questions for the next visit, home readings, the phone layout and photos
+of paper records, and the first-run setup. The second pass (2026-11-25, after RxNorm codes and PDF
+printouts) covered the whole codebase (server, sign-in, uploads, importers, page, deploy scripts).
 
 **What this dashboard is built to withstand:** other people and devices on a home network, and
 websites open in the browser of someone who uses the dashboard. **What it is not built for:** the
@@ -30,6 +31,21 @@ that scope, nothing serious is open. Each finding is listed below with what was 
 | 10 | **Export zips: total size.** A portal export zip was limited per file (50 MB) and by file count (2,000), but not in total, and its files are held in memory while it is read. A crafted zip could claim up to 100 GB and exhaust memory. | Medium | At most 2 GB unpacked per export (`ccda.MAX_UNPACKED`), checked before anything is read. |
 | 11 | **Downloads of files with non-Latin names.** A file name with letters outside Latin-1 (Chinese, Greek, ...) broke the download: HTTP headers can't carry them, so the response came out garbled. | Low (a bug, not a hole) | Such letters become `_` in the download name. |
 | 12 | **Whole files in memory on download.** Each download read the whole file (an imaging zip can be hundreds of MB) into memory first. | Low (home-network denial of service) | Files are sent in 1 MB pieces. |
+
+## Fixed in the third pass (2026-11-27)
+
+| # | Finding | Risk | Fix |
+|---|---|---|---|
+| 13 | **"inf" and "nan" accepted as numbers.** Python reads `inf`, `-Infinity`, `1e999` and `nan` as numbers, so a home reading or a lab value typed that way was saved. JSON can't carry them, so the page could no longer read that list: the Home readings or Lab trends tab broke for everyone until the entry was removed on the server. `nan` also got past "the reading is needed". None were in the real data. | Medium (anyone who can edit could break a tab) | Numbers that aren't finite are refused like any other bad number. |
+| 14 | **No length limit on the newer text fields.** A reading's type, unit and notes, and a question's text, who to ask and answer, took any length (100,000 characters went through), filling the page and the printouts. | Low | Limits: type 60, unit 20, notes 1,000; question 2,000, who to ask 100, answer 5,000 characters. |
+| 15 | **Pasted readings: no row limit.** A paste up to 500,000 characters could save tens of thousands of readings, each written on its own, holding the database for a long time on the Pi. | Low (home-network denial of service) | Up to 5,000 readings per paste; the rest can be pasted separately. |
+
+Checked and found sound in this pass: every value the new page code shows is escaped (questions,
+readings, the paste preview, the setup steps, phone table labels come from column headings by
+`textContent`); new routes (`/api/readings/paste`, `/api/firstrun`, `/report?view=questions|readings`)
+sit behind the same access rules, Origin check and person lookup as the rest; `days=` and `ask=`
+are checked or only compared; photos become a PDF in the browser and meet the same upload checks;
+nothing of the removed plugin answers any more (no Bearer access, no `/api/keys`, old keys dropped).
 
 ## Choosing where files are kept (2026-11-26)
 
@@ -97,7 +113,7 @@ when the dashboard starts (the `api_keys` table is dropped). Findings above that
 describe the code as it was then.
 
 Tests for each are in `tests/test_auth.py`, `tests/test_features.py`, `tests/test_storage.py` and
-`tests/test_emergency.py`, `tests/test_questions.py` and `tests/test_readings.py`.
+`tests/test_emergency.py`, `tests/test_questions.py` and `tests/test_readings.py` (#13-15 too).
 
 ## Checked and found sound
 

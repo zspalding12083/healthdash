@@ -11,6 +11,7 @@ the importer leaves it alone from then on.
 """
 
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -50,6 +51,9 @@ DROPPED = {}  # removed columns, erased on open
 DROPPED_TABLES = ['financial']  # bills and estimates are no longer kept
 INTEGER = {'abnormal', 'important'}
 QUESTION_STATUS = ('open', 'answered')
+# longest text for fields typed by hand on the newer kinds
+TEXT_LIMITS = {('readings', 'type'): 60, ('readings', 'unit'): 20, ('readings', 'notes'): 1000,
+               ('questions', 'question'): 2000, ('questions', 'ask'): 100, ('questions', 'answer'): 5000}
 DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted', 'answered_on'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
@@ -335,6 +339,8 @@ class Store:
                     out[f] = float(str(v).replace('$', '').replace(',', ''))
                 except ValueError:
                     raise ValidationError(f'{f} must be a number')
+                if not math.isfinite(out[f]):   # nan/inf can't be sent as JSON: the page couldn't read the list
+                    raise ValidationError(f'{f} must be a number')
             elif f in INTEGER:
                 out[f] = 1 if v in (1, True, '1', 'true', 'yes') else 0
             elif f == 'codes':
@@ -344,6 +350,8 @@ class Store:
                     raise ValidationError(str(e))
             else:
                 v = str(v).strip()
+                if len(v) > TEXT_LIMITS.get((kind, f), len(v)):
+                    raise ValidationError(f'{f} is too long (up to {TEXT_LIMITS[(kind, f)]} characters)')
                 if f in DATE_FIELDS and v and not DATE_RE.match(v):
                     raise ValidationError(f'{f} must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
                 out[f] = v

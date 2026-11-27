@@ -59,6 +59,25 @@ class EntryTests(StoreCase):
         self.assertEqual(got, {('blood_pressure', 150): 'H', ('blood_pressure', 118): None,
                                ('temperature', 38.5): None, ('oxygen', 90): 'L'})
 
+    def test_numbers_that_cant_be_sent_and_overlong_text_refused(self):
+        for bad in ('nan', 'inf', '-Infinity', '1e999'):
+            with self.assertRaises(ValidationError, msg=bad):
+                self.add('pulse', bad)
+            with self.assertRaises(ValidationError, msg=bad):
+                self.store.create('labs', {'analyte': 'Sample test', 'num': bad, 'date': '2026-11-20'})
+        for f, n in (('type', 61), ('unit', 21), ('notes', 1001)):
+            with self.assertRaises(ValidationError, msg=f):
+                self.store.create('readings', {'type': 'pulse', 'reading': 70, 'date': '2026-11-20', f: 'x' * n})
+        with self.assertRaises(ValidationError):
+            self.store.create('questions', {'question': 'x' * 2001})
+        self.assertEqual(self.store.list('readings'), [])
+
+    def test_paste_capped(self):
+        text = '\n'.join(f'2020-01-{1 + i % 28:02d} {i // 60 % 24:02d}:{i % 60:02d} {60 + i % 40}' for i in range(readings.MAX_PASTE + 1))
+        with self.assertRaises(ValidationError):
+            readings.add_pasted(self.store, text, 'pulse', apply=True, today=TODAY)
+        self.assertEqual(self.store.list('readings'), [])
+
     def test_newest_first_by_day_and_time(self):
         self.add('pulse', 70, d='2026-11-19', t='21:00')
         self.add('pulse', 71, t='07:00')
