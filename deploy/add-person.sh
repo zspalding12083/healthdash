@@ -56,4 +56,3 @@ else
 fi
 echo
 echo "Next: open $NEW and create the first account (until then, whoever opens it first can)."
-echo "For the Firefox plugin, create a key there and add it in the plugin's settings as another dashboard."

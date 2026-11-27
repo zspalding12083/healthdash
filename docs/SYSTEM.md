@@ -23,7 +23,7 @@ imported data is kept tidy, and how to run and change it. The README covers inst
  records folder ──► ingest (extract, catalog, records.json) ──► POST /api/import ─┐
                                                                                    ▼
  patient-portal exports (.zip/.xml), PDFs, photos ──► upload ──► dashboard server (SQLite per person)
- Firefox plugin (saved portal pages)            ──►            ▲         │
+                                                                ▲         │
                                                     browser ───┘         └─► files/ (originals by sha256)
 ```
 
@@ -31,20 +31,21 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 |---|---|
 | `server.py` | HTTP server: the page, the JSON API, file downloads, uploads, sign-in. One handler serves every person on the dashboard; requests pick one with the `X-Person` header (`?p=` for links). |
 | `store.py` | The database: schema, records of each kind, documents and their full-text index, timeline, lab series, review queue, settings, and the passes that keep imported records tidy. |
-| `uploads.py` | Files added from the dashboard or plugin: checked, stored by sha256, read by a background worker, sorted and turned into entries. Imports health summaries. Runs the one-time passes. |
+| `uploads.py` | Files added from the dashboard: checked, stored by sha256, read by a background worker, sorted and turned into entries. Imports health summaries. Runs the one-time passes. |
 | `ccda.py` | Reads C-CDA documents (the standard "health summary" a portal exports, often as an IHE XDM zip): the visit, results, medications, problems, allergies, procedures, vaccines and a readable page. Also drug names (`drug_key`) and hospital-department places. |
 | `fhir.py` | Reads FHIR bundles (some portals' "all my data" export) into the same shapes. |
 | `parsers.py` | Lab results from printouts and portal pages (several layouts, including LabCorp reports), and one name per lab test (`standard_name`, `display_name`). |
 | `classify.py` | What an uploaded document is: kind, date, place, title, amounts, and the questions to ask when unsure. |
 | `codes.py` | Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS) and medications (RxNorm): read from C-CDA and FHIR (only the systems that fit the kind of entry, `FOR_KIND`), checked and written one way when typed, merged when entries merge. No code tables, no lookups. |
 | `report.py` | The printouts: the health summary (`summary`: current conditions, allergies and medicines, procedures, life events, flagged labs, a dated history, past conditions and medicines) and the quick list of allergies and current medicines (`med_list`). Each is built once as a list of blocks, then drawn as a self-contained HTML page (`to_html`) or a PDF. |
+| `emergency.py` | The emergency card (`card`): contacts, blood type, allergies, prescription medicines, chosen conditions, devices, recent procedures, doctor, pharmacy, insurance. Its own details are the setting `emergency` in each person's database (`load`, `save`, checked by `clean`). |
 | `pdf.py` | A small PDF writer (standard library only): report blocks on US Letter pages in the PDF base fonts (Helvetica), tables that continue across pages with their headings, "page N of M". Latin-1 text; common typographic characters are written plainly. |
 | `checks.py` | Record checks: questions on the Review tab about likely mistakes (see below). |
 | `extract.py` | Text of PDFs (with OCR for scanned pages), office files, web pages, and DICOMDIR headers of imaging discs; cached by sha256. |
 | `catalog.py`, `organize.py`, `ingest.py` | The records folder: per-file details, a sorted copy, and sending everything to the dashboard. |
 | `people.py` | Several people on one dashboard, each with their own database and files. |
 | `storage.py` | Where the original files are kept: the folder chosen under Accounts (moving files there), and the readable, sorted copy kept beside them. |
-| `auth.py` | Optional sign-in: whether it is on, accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie) and plugin keys. |
+| `auth.py` | Optional sign-in: whether it is on, accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie). |
 | `config.py` | Settings from `data/local.json`. |
 | `doctor.py`, `macos.py`, `wipe.py`, `demo.py` | `check`, the macOS service, starting over, and the sample data. |
 | `static/index.html` | The whole interface, no build step. |
@@ -95,7 +96,7 @@ The database stays in the data folder.
 1. **From the records folder** (`python3 -m healthdash ingest`): every file is read (text, OCR,
    DICOMDIR), described from the catalog, matched with hand-built records (`data/records.json`),
    sent to `/api/import` from the ingest host, and the files the server doesn't have are uploaded.
-2. **Uploaded on the dashboard or by the plugin**: the file is stored under its sha256 and queued.
+2. **Uploaded on the dashboard**: the file is stored under its sha256 and queued.
    The worker reads it, works out what it is (`classify.py`) and takes lab results from it
    (`parsers.py`). Unsure details are marked for review.
 3. **Health summary exports** (`.zip`/`.xml`): each C-CDA document (or FHIR bundle) becomes a
@@ -182,7 +183,7 @@ All under `/api/`, JSON, for the signed-in user (anyone, when sign-in is off) un
 | `GET summary`, `timeline`, `search?q=`, `places`, `labs/series`, `review`, `checks` | home page numbers, everything by date, full-text search, place names, lab trends, the two review lists |
 | `GET/POST <kind>`, `GET/PUT/DELETE <kind>/<id>` | records of each kind; PUT marks an entry edited |
 | `GET documents`, `GET/PUT/DELETE documents/<id>`, `POST documents/<id>/retry` | files |
-| `POST upload?name=` | add a file (also with a plugin key, and from the ingest host) |
+| `POST upload?name=` | add a file (also from the ingest host) |
 | `POST checks` `{key, action}` | answer a record check |
 | `POST medications/current-list` | set a pasted medication list against the records |
 | `GET/POST people`, `PUT people/<id>` | the people on the dashboard |
@@ -198,7 +199,9 @@ YYYY-MM or YYYY-MM-DD), `sections` (comma list of `overview, procedures, life, l
 `kinds` (what the history lists: `encounters, tests, imaging, procedures, medications,
 immunizations, life_events`), `order=oldest`, `download=1` (the same page as an `.html` file),
 `format=pdf` (a PDF instead; with `download=1` saved as a file). `view=meds` gives the quick list of
-allergies and current medicines instead (`otc=0` leaves out over-the-counter ones). The
+allergies and current medicines instead (`otc=0` leaves out over-the-counter ones); `view=card`
+the emergency card. `GET /api/emergency` gives the card's details and the current conditions to
+choose from; `PUT /api/emergency` saves the details. The
 page allows no outside content and only its own Print script (a per-page nonce, also in a meta tag
 so a saved copy keeps the rule).
 
@@ -210,8 +213,7 @@ so a saved copy keeps the rule).
   in after a lost password, with `user passwd`). The choice is the `login_required` setting; a
   dashboard with accounts and no saved choice (set up before sign-in was optional) keeps it on.
 - With sign-in on, every route needs a signed-in account, except the page itself and sign-in.
-  Plugin keys can only upload and list (a key made while sign-in was off stops working when it is
-  turned on). Without an account only the configured ingest host can import or back up, and the
+  Without an account only the configured ingest host can import or back up, and the
   server's own machine can only send records in.
 - Changes are only accepted from the dashboard's own page (the `Origin` check), and every request
   must name the dashboard by an address, a name without dots or a local-only name (`.local`, `.lan`,

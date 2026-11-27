@@ -35,12 +35,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT NOT NULL, created TEXT);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, username TEXT NOT NULL,
                                      created REAL NOT NULL, expires REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, username TEXT NOT NULL,
-                                     label TEXT, created TEXT, last_used TEXT);
+DROP TABLE IF EXISTS api_keys;
 """
-KEY_PREFIX = 'hdk_'
-# owner of plugin keys made while sign-in is off; not a valid user name, so no account can claim them
-NO_LOGIN_OWNER = '(no sign-in)'
 
 
 def hash_password(password, salt=None, iterations=ITERATIONS):
@@ -66,8 +62,8 @@ def _token_hash(token):
 
 
 class Auth:
-    """Sign-in accounts, browser sessions and plugin keys, stored in the dashboard database.
-    Passwords and keys are kept only as salted hashes."""
+    """Sign-in accounts and browser sessions, stored in the dashboard database.
+    Passwords and session tokens are kept only as salted hashes."""
     def __init__(self, store):
         self.store = store
         self.db = store.db
@@ -135,14 +131,13 @@ class Auth:
             raise ValidationError(f'no user {username}')
 
     def remove_user(self, username):
-        """Delete an account and its sessions and keys; the last account cannot be removed."""
+        """Delete an account and its sessions; the last account cannot be removed."""
         username = (username or '').lower()
         with self.store.lock:
             if self.count() <= 1:
                 raise ValidationError("can't remove the last account")
             n = self.db.execute('DELETE FROM users WHERE username=?', (username,)).rowcount
             self.db.execute('DELETE FROM sessions WHERE username=?', (username,))
-            self.db.execute('DELETE FROM api_keys WHERE username=?', (username,))
             self.db.commit()
         if not n:
             raise ValidationError(f'no user {username}')
@@ -194,40 +189,6 @@ class Auth:
             with self.store.lock:
                 self.db.execute('DELETE FROM sessions WHERE token_hash=?', (_token_hash(token),))
                 self.db.commit()
-
-    # ---- plugin keys: only allowed to add files and check on them (see server.KEY_ROUTES) ----
-
-    def create_key(self, username, label=''):
-        kid, key = secrets.token_hex(6), KEY_PREFIX + secrets.token_urlsafe(32)
-        with self.store.lock:
-            self.db.execute('INSERT INTO api_keys VALUES (?, ?, ?, ?, ?, NULL)',
-                            (kid, _token_hash(key), username, (label or 'Browser plugin')[:60], now()))
-            self.db.commit()
-        return {'id': kid, 'key': key}
-
-    def keys(self):
-        return [{'id': r[0], 'username': r[1], 'label': r[2], 'created': r[3], 'last_used': r[4]}
-                for r in self.db.execute('SELECT id, username, label, created, last_used FROM api_keys ORDER BY created')]
-
-    def revoke_key(self, kid):
-        with self.store.lock:
-            n = self.db.execute('DELETE FROM api_keys WHERE id=?', (kid,)).rowcount
-            self.db.commit()
-        return n > 0
-
-    def key_user(self, key):
-        """The account a plugin key belongs to (and note when it was last used), or None. A key made
-        while sign-in was off (or whose account was removed) only works while sign-in is off."""
-        if not key or not key.startswith(KEY_PREFIX):
-            return None
-        row = self.db.execute('SELECT k.id, k.username, u.username FROM api_keys k LEFT JOIN users u '
-                              'ON u.username=k.username WHERE k.key_hash=?', (_token_hash(key),)).fetchone()
-        if not row or (row[2] is None and self.required()):
-            return None
-        with self.store.lock:
-            self.db.execute('UPDATE api_keys SET last_used=? WHERE id=?', (now(), row[0]))
-            self.db.commit()
-        return row[1]
 
     @staticmethod
     def cookie(token, secure=False):

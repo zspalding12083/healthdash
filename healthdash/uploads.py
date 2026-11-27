@@ -21,10 +21,10 @@ from .store import ValidationError, now
 
 TYPES = {'.pdf': (b'%PDF',), '.jpg': (b'\xff\xd8\xff',), '.jpeg': (b'\xff\xd8\xff',),
          '.png': (b'\x89PNG',), '.tif': (b'II*\x00', b'MM\x00*'), '.tiff': (b'II*\x00', b'MM\x00*'),
-         '.html': (b'<',),   # a portal page saved by the browser plugin
+         '.html': (b'<',),   # a page inside a health summary export
          '.zip': (b'PK',), '.xml': (b'<',)}  # a health summary export (C-CDA, e.g. MyChart's)
 IMPORTED_DIR = 'Imported'
-MIN_PAGE_TEXT = 300  # a saved page with less text than this is a menu or a loading screen
+MIN_PAGE_TEXT = 300  # a web page with less text than this is a menu or a cover page
 UPLOAD_DIR = 'Uploaded'
 NO_TOOLS = "the dashboard can't read files yet"
 
@@ -63,7 +63,7 @@ def safe_name(name):
 
 
 class Uploads:
-    """Files added from the dashboard or the browser plugin: checked, stored, read in a
+    """Files added from the dashboard: checked, stored, read in a
     background worker, sorted, and turned into entries. Also runs the one-time passes on startup."""
     def __init__(self, store, files_dir, extractor=None, recheck=60):
         """Start the background worker and queue anything unfinished and any one-time passes due."""
@@ -123,7 +123,7 @@ class Uploads:
         Returns {id, duplicate, title, status}."""
         name = safe_name(name)
         ext = os.path.splitext(name)[1].lower()
-        if ext not in TYPES or (ext == '.html' and source not in ('plugin', 'export')):
+        if ext not in TYPES or (ext == '.html' and source != 'export'):
             raise ValidationError('only PDFs, pictures (JPG, PNG, TIFF) and health summary exports (.zip, .xml) can be added')
         if ext == '.html':
             data = data.lstrip()
@@ -149,8 +149,7 @@ class Uploads:
         self.store.upsert_documents([{
             'id': sha, 'path': f'{UPLOAD_DIR}/{name}', 'orig_path': name, 'title': os.path.splitext(name)[0],
             'category': 'other', 'size': len(data), 'ext': ext, 'text': '', 'needs_review': True,
-            'status': 'processing', 'summary': (f'Saved by the browser plugin on {now()[:10]}.' if source == 'plugin'
-                                                else f'Added from the dashboard on {now()[:10]}.')}])
+            'status': 'processing', 'summary': f'Added from the dashboard on {now()[:10]}.'}])
         self.store.set_has_file(sha)
         self.q.put(sha)
         return {'id': sha, 'duplicate': False, 'title': name, 'status': 'processing'}
@@ -497,13 +496,6 @@ class Uploads:
             title=r['title'], doc_date=r['doc_date'], category=r['category'], facility=r['facility'],
             status='processing', needs_review=bool(questions), review_note='\n'.join(questions) or None,
             duplicate_of=dup['id'] if dup else None, classified=classify.VERSION)
-        if d.get('ext') == '.html' and not reuse_text:
-            # a page saved before it finished loading is replaced by the fuller save
-            new = classify.shingles(text)
-            for oid, otext in self.store.plugin_pages(sha):
-                old = classify.shingles(otext)
-                if len(old) >= 10 and len(new) > len(old) and len(old & new) / len(old) >= 0.9:
-                    self.delete(oid)
         if dup and dup['how'] == 'copy':
             self.store.set_upload_result(sha, status='done')
             return r  # nothing new to add from a copy

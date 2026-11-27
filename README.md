@@ -44,6 +44,11 @@ Mac on the home network.
   **🖨 Print list** on the Medications tab (also in the Summary dialog) prints just the allergies and
   the medicines taken now, in large type with blank rows for changes: for a wallet, the fridge or a
   new doctor's forms. It also comes as a PDF.
+- **Emergency card**: in the Summary dialog, one page (two at most) for paramedics, the ER or a
+  caregiver: emergency contacts, date of birth and blood type, allergies (severe ones in red),
+  prescription medicines, the conditions you choose, implants and devices, recent surgeries, doctor,
+  pharmacy, insurance and anything else to know first. **Edit details** holds what no medical
+  record says; the rest comes from the records. Print it or download it as a PDF to keep on a phone.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
   per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
   it would change (started, stopped, a dose that differs, one drug under two names) before saving
@@ -212,8 +217,7 @@ deploy/add-person.sh alex 9381 "Alex's Health"   # asks for the server's sudo pa
 It creates the service `healthdash-alex` with its data in `/var/lib/healthdash-alex` and adds it to
 `OTHERS` in `deploy/local.env`, so `deploy/sync.sh push` updates and restarts it and
 `deploy/sync.sh backup` copies it into `backups/alex/`. Open `http://<server>:9381` and create its first
-account right away. In the Firefox plugin, add it as another dashboard; the popup's **Save to** picks
-whose dashboard gets what you save (useful with MyChart's family access).
+account right away.
 
 ## Where records are kept
 
@@ -259,29 +263,6 @@ Several portals can export every visit at once. Drop the file they give you on t
 - **IQHealth / HealtheLife** (Oracle Health, formerly Cerner): on `iqhealth.com`, open your health
   record's sharing page, `/person/<your id>/health-record/sharing/`, and download the health summary.
 
-For anything a portal won't export in bulk, the plugin below saves pages one at a time as you read them.
-
-## Firefox plugin: save records as you view them
-
-Patient portals (MyChart, FollowMyHealth, HealtheLife and others) rarely offer a bulk download. The
-plugin in `browser-extension/firefox` sends what you open to your dashboard instead.
-
-- **Off until you switch it on** from its toolbar button. While off it runs on no website at all.
-- Only works on the portal sites you list in its settings, and only sends to your dashboard's address.
-- **Save this page** sends the page you're looking at; **Save every portal page I open** does it for you.
-  PDFs you download from those sites are sent too (when the portal builds a PDF inside the page the
-  plugin can't fetch it again; it says so and you drop that file on the dashboard).
-- The dashboard reads and sorts each one like any other upload. Pages with almost no text, and pages
-  it already has, are dropped instead of asking you about them.
-- It uses a **plugin key** (dashboard: 👤 → Accounts → Browser plugin keys), which can only add files
-  and check on them; it can't read or change records. Revoke it there at any time.
-
-Install: `browser-extension/build.sh` makes `dist/healthdash-capture-firefox.zip`. Firefox only keeps
-signed add-ons installed: upload the zip at https://addons.mozilla.org/developers/ as **"On your own"**
-(unlisted, signed automatically, not published), then open the signed `.xpi` in Firefox. To just try it,
-use `about:debugging` → *This Firefox* → *Load Temporary Add-on* (removed when Firefox restarts). Then open
-the plugin's settings, enter the dashboard address and key, and allow the sites when Firefox asks.
-
 ## Layout
 
 How the parts fit together, the data model, the import rules and the API are in
@@ -298,6 +279,7 @@ healthdash/
   ingest.py     extract -> describe -> POST to the dashboard -> upload missing files
   codes.py      medical codes (ICD-10, SNOMED CT, CPT, ...): read, checked, written one way
   report.py     the printouts: health summary, medicines and allergies (HTML or PDF)
+  emergency.py  the emergency card and its details (contacts, blood type, devices, ...)
   pdf.py        a small PDF writer for them (standard library only)
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes
@@ -305,7 +287,7 @@ healthdash/
   people.py     several people on one dashboard
   storage.py    where the original files are kept, and the readable sorted copy
   doctor.py     `check`: what's installed and how to install what isn't
-  auth.py       optional sign-in: accounts, password hashing, sessions, plugin keys
+  auth.py       optional sign-in: accounts, password hashing, sessions
   macos.py      `service`: launchd setup on a Mac
   store.py      SQLite schema, FTS search, timeline, lab series, edit tracking, tidy-up passes
   server.py     JSON API + static page

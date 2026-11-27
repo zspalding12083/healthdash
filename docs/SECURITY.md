@@ -36,7 +36,7 @@ that scope, nothing serious is open. Each finding is listed below with what was 
 Reviewed with the feature (`storage.py`, `POST /api/storage`):
 
 - **Who can change it**: anyone who can use the dashboard (a signed-in account, or anyone on the
-  network with sign-in off, who can read everything anyway). Not plugin keys, and not the ingest host.
+  network with sign-in off, who can read everything anyway). Not the ingest host.
 - **Which folders**: an existing absolute folder the dashboard can write to; `/`, system folders
   (`/etc`, `/usr`, `/System`, ...) and the program's own folder are refused. On Linux the service's
   systemd limits still apply: it can only write where `ReadWritePaths` allows.
@@ -51,7 +51,22 @@ Reviewed with the feature (`storage.py`, `POST /api/storage`):
   records with everyone who can open it; on a Mac its folders are created readable by other
   accounts on the computer unless the chosen folder isn't.
 
-Tests for each are in `tests/test_auth.py`, `tests/test_features.py` and `tests/test_storage.py`.
+## Emergency card (2026-11-26)
+
+The card's details (contacts, insurance number, notes) are stored per person like any record, with
+length limits and a checked date and blood type (`emergency.clean`); the card is drawn by the same
+escaped, nonce-only printout code as the other printouts. Like all records, anyone who can use the
+dashboard can read and change them. A printed or downloaded card is outside the dashboard's control.
+
+## Browser plugin removed (2026-11-27)
+
+The Firefox plugin and its keys are gone: there is no `Authorization: Bearer` access any more, no
+`/api/keys`, and every change must come from the dashboard's own page. Keys made earlier are deleted
+when the dashboard starts (the `api_keys` table is dropped). Findings above that mention plugin keys
+describe the code as it was then.
+
+Tests for each are in `tests/test_auth.py`, `tests/test_features.py`, `tests/test_storage.py` and
+`tests/test_emergency.py`.
 
 ## Checked and found sound
 
@@ -59,18 +74,16 @@ Tests for each are in `tests/test_auth.py`, `tests/test_features.py` and `tests/
   name costs the same time as a wrong password. Five wrong passwords from one address lock it for a minute.
 - **Sessions**: 32 random bytes, only the SHA-256 kept; HttpOnly, `SameSite=Strict`; changing a
   password signs that account out everywhere; 30-day expiry.
-- **Cross-site requests**: anything that changes data must carry the dashboard's own `Origin` (plugin
-  keys excepted, which are never sent automatically); `SameSite=Strict` cookies on top.
+- **Cross-site requests**: anything that changes data must carry the dashboard's own `Origin`; `SameSite=Strict`
+  cookies on top.
 - **SQL**: values are always bound parameters. Table and column names come only from the fixed `KINDS`
   list and checked field names, never from a request. Search terms are quoted for FTS5.
 - **Files**: stored and served by sha256 name only (`/file/<64 hex>`); the page's static route
-  refuses `/` and dot-names. Saved portal pages are served with a sandbox policy that allows no
+  refuses `/` and dot-names. Web pages (from health summary exports) are served with a sandbox policy that allows no
   scripts and no outside loads. Uploads are checked by their first bytes, not only their name.
 - **XML**: health summaries with a DOCTYPE or entity declarations anywhere are refused (no XXE or
   "billion laughs"); Python's parser doesn't fetch outside entities and caps entity expansion anyway.
-- **Sign-in, again** (second pass): turning sign-in off needs a signed-in browser session (a plugin
-  key can't); setup is refused once any account exists; removing an account ends its sessions and
-  keys; a session only counts while its account exists. Backups, imports and the uploads list
+- **Sign-in, again** (second pass): turning sign-in off needs a signed-in browser session; setup is refused once any account exists; removing an account ends its sessions; a session only counts while its account exists. Backups, imports and the uploads list
   still need the ingest host's address when sign-in is off.
 - **Paths**: every file path is built from a checked sha256 or a document id from the database,
   never from a name in a request; `/static/` refuses `/` and names starting with `.`, and the path

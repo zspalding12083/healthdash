@@ -18,7 +18,7 @@ class WipeTests(unittest.TestCase):
         with mock.patch.object(authmod, 'ITERATIONS', 1000), tempfile.TemporaryDirectory() as tmp:
             files = os.path.join(tmp, 'files'); os.makedirs(files)
             st = Store(os.path.join(tmp, 'health.db'))
-            a = Auth(st); a.add_user('ann', 'password1'); key = a.create_key('ann', 'Firefox')['key']
+            a = Auth(st); a.add_user('ann', 'password1')
             st.upsert_documents([{'id': 'd1', 'path': 'x.pdf', 'title': 'Ankle x-ray', 'text': 'fibula', 'needs_review': False}])
             st.upsert_imported('labs', [{'id': 'l1', 'date': '2020-01-01', 'analyte': 'WBC', 'value': '5', 'docs': ['d1']}])
             open(os.path.join(files, 'd1.pdf'), 'wb').write(b'%PDF')
@@ -37,7 +37,6 @@ class WipeTests(unittest.TestCase):
             self.assertEqual(os.listdir(files), [])
             a = Auth(st)
             self.assertTrue(a.login('ann', 'password1'))
-            self.assertEqual(a.key_user(key), 'ann')
             ppl = People(st, files, None, state_dir=tmp)
             self.assertEqual([p['name'] for p in ppl.list()], ['Jane', 'Sam'])
             self.assertEqual(ppl.get('sam').store.list('conditions'), [])

@@ -571,12 +571,6 @@ class Store:
                                 (row['date'], row['analyte'], row.get('value')))
         return q.fetchone() is not None
 
-    def plugin_pages(self, except_id):
-        """Saved portal pages nobody has saved by hand: (id, text)."""
-        return [(r[0], r[1]) for r in self.db.execute(
-            "SELECT id, text FROM documents WHERE ext='.html' AND path LIKE 'Uploaded/%' AND person_edited=0 "
-            "AND coalesce(status,'done')='done' AND id<>?", (except_id,))]
-
     def link_doc(self, kind, rid, did):
         """Add a source document to an existing entry (doesn't count as a person's edit)."""
         r = self.get(kind, rid)

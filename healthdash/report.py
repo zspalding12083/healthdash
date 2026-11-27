@@ -6,7 +6,7 @@ Built from the records on the dashboard (nothing is looked up elsewhere) for a n
 specialist visit or a person's own files. /report shows the summary, where the browser prints it;
 /report?download=1 gives the same page as a file and /report?format=pdf a PDF. /report?view=meds is
 the quick list of current medicines and allergies, for a wallet, the fridge or a new doctor's
-forms. The HTML page has no outside links, fonts or scripts beyond its Print button, so a downloaded
+forms. /report?view=card is the emergency card (emergency.py). The HTML page has no outside links, fonts or scripts beyond its Print button, so a downloaded
 copy reads the same anywhere.
 
 Summary sections, in order (each can be left out with the `sections` option):

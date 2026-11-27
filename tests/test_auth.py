@@ -97,13 +97,14 @@ class AuthServerTests(unittest.TestCase):
         self.assertTrue(self.auth.required())
         self.assertEqual(self.call('/api/summary')[0], 401)
 
-    def test_plugin_key_made_without_sign_in(self):
-        code, k, _ = self.call('/api/keys', {'label': 'Firefox'})
-        self.assertEqual(code, 201)
-        self.assertEqual(self.auth.key_user(k['key']), authmod.NO_LOGIN_OWNER)
+    def test_old_plugin_keys_are_gone(self):
+        self.auth.db.execute("CREATE TABLE IF NOT EXISTS api_keys (id TEXT, key_hash TEXT)")   # left by an older version
+        Auth(self.store)
+        self.assertIsNone(self.auth.db.execute("SELECT name FROM sqlite_master WHERE name='api_keys'").fetchone())
         self.auth.add_user('ann', 'password1')
         self.auth.set_required(True)
-        self.assertIsNone(self.auth.key_user(k['key']))            # stops working once sign-in is on
+        self.assertEqual(self.call('/api/upload?name=a.pdf', headers={'Authorization': 'Bearer hdk_x'})[0], 401)
+        self.assertEqual(self.call('/api/keys', cookie=f"hd_session={self.auth.login('ann', 'password1')}")[0], 404)
 
     def test_look_alike_domains_are_refused(self):
         from healthdash.server import host_ok

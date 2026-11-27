@@ -66,8 +66,6 @@ def stored_file(files_dir, sha, ext=None):
     return None
 
 
-# what a browser-plugin key may do: add files, see how they were filed, check it's connected
-KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health'), ('GET', 'people')}
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
 
 
@@ -101,7 +99,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
     home = store
 
     class Handler(BaseHTTPRequestHandler):
-        """Handles one request. Every API call is checked by _allowed (signed in, plugin key, or the
+        """Handles one request. Every API call is checked by _allowed (signed in, or the
         ingest host for the script routes) before _dispatch runs it."""
         server_version = 'healthdash'
 
@@ -168,14 +166,6 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 self._on = bool(auth) and auth.required()
             return self._on
 
-        def _key_user(self):
-            h = self.headers.get('Authorization') or ''
-            if not auth or not h.startswith('Bearer '):
-                return None
-            if not hasattr(self, '_keyed'):
-                self._keyed = auth.key_user(h[7:].strip())
-            return self._keyed
-
         def _user(self):
             """Who is signed in: their user name; 'local' when sign-in is off; None when not signed in."""
             if not self._login_on():
@@ -185,13 +175,10 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             return self._who
 
         def _allowed(self, method, parts):
-            """May this request go ahead? Signed in: yes. A plugin key: only its routes. Not signed in:
+            """May this request go ahead? Signed in: yes. Not signed in:
             the page itself and the sign-in routes, plus the script routes from the ingest host."""
             if not self._login_on() or self._user():
                 return True
-            if self._key_user():
-                return parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in KEY_ROUTES and \
-                    (parts[1] != 'documents' or len(parts) == 3)
             if method in ('GET', 'HEAD') and (not parts or parts == ['index.html'] or parts[0] == 'static'):
                 return True
             if parts[0] == 'api' and len(parts) >= 2 and (method, parts[1]) in PUBLIC_API:
@@ -221,9 +208,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if not host_ok(self.headers.get('Host'), allow_hosts):
                     return self._err(421, 'open the dashboard by its address (for example http://192.168.1.20:9380) '
                                           'or start it with --allow-host NAME')
-                # a plugin key is sent on purpose, never automatically like a cookie, so the
-                # same-page rule (which stops other websites using your sign-in) doesn't apply
-                if method not in ('GET', 'HEAD') and not self._same_origin() and not self._key_user():
+                # stops other websites using your sign-in
+                if method not in ('GET', 'HEAD') and not self._same_origin():
                     return self._err(403, 'requests must come from the dashboard page')
                 if not self._allowed(method, parts):
                     return self._err(401, 'please sign in')
@@ -268,6 +254,14 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             p = parts[1:]
             if p == ['storage'] and people.storage:
                 return self._storage(method)
+            if p == ['emergency']:
+                from . import emergency
+                if method == 'PUT':
+                    return self._send(200, emergency.save(self.ctx.store, self._json()))
+                if method == 'GET':   # the details, and the current conditions to choose from
+                    return self._send(200, {'details': emergency.load(self.ctx.store),
+                                            'conditions': [{'id': c['id'], 'name': c['name'], 'first_noted': c['first_noted']}
+                                                           for c in emergency.active_conditions(self.ctx.store)]})
             r = self._accounts(method, p)
             if r is not False:
                 return r
@@ -323,8 +317,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                     # from anyone on the LAN using the dashboard; the file is checked, then read
                     if not self.ctx.uploads:
                         return self._err(503, 'uploads are not enabled')
-                    return self._send(202, self.ctx.uploads.add(qs.get('name', ''), self._raw_body(),
-                                                       source=qs.get('source', 'dashboard')))
+                    return self._send(202, self.ctx.uploads.add(qs.get('name', ''), self._raw_body()))
                 if p == ['import']:
                     if not self._importer():
                         return self._err(403, 'import is only allowed from the ingest host')
@@ -364,8 +357,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             """Sign-in and account routes; False when the path isn't one of them."""
             on = self._login_on()
             if p == ['auth'] and method == 'GET':
-                return self._send(200, {'auth': on, 'user': (self._user() or self._key_user()) if on else None,
-                                        'via_key': bool(on and not self._user() and self._key_user()),
+                return self._send(200, {'auth': on, 'user': self._user() if on else None,
                                         'setup_needed': on and auth.count() == 0,
                                         'can_sign_in': bool(auth), 'accounts': auth.count() if auth else 0})
             if not auth:
@@ -397,15 +389,6 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return self._send(200, self._move(p[1], (self._json() or {}).get('to')))
             if len(p) == 2 and p[0] == 'people' and method == 'PUT' and self._user():
                 return self._send(200, people.rename(p[1], (self._json() or {}).get('name')))
-            if p[:1] == ['keys'] and self._user():
-                if p == ['keys'] and method == 'GET':
-                    return self._send(200, auth.keys())
-                if p == ['keys'] and method == 'POST':
-                    from .auth import NO_LOGIN_OWNER
-                    return self._send(201, auth.create_key(self._user() if on else NO_LOGIN_OWNER,
-                                                           (self._json() or {}).get('label', '')))
-                if len(p) == 2 and method == 'DELETE':
-                    return self._send(200, {'revoked': auth.revoke_key(p[1])})
             if p[:1] != ['users']:
                 return False
             if p == ['users'] and method == 'GET':
@@ -556,7 +539,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _report(self, qs):
             """The printouts (report.py) for the chosen person. Options in the query: from, to (dates),
             sections and kinds (comma lists), order=oldest; or view=meds (with otc=0 to leave out
-            over-the-counter medicines) for the quick medicines-and-allergies list. format=pdf gives a
+            over-the-counter medicines) for the quick medicines-and-allergies list; or view=card for
+            the emergency card (emergency.py). format=pdf gives a
             PDF (pdf.py) instead of the page; download=1 saves either as a file."""
             from urllib.parse import urlencode
             from .report import HISTORY_KINDS, SECTIONS, med_list, summary, to_html
@@ -566,12 +550,18 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if d and not DATE_RE.match(d):
                     raise ValidationError('dates must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
             pick = lambda key, allowed: [x for x in (qs.get(key) or '').split(',') if x in allowed] or None  # noqa: E731
-            meds = qs.get('view') == 'meds'
-            doc = (med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0') if meds else
-                   summary(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
-                           qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS)))
+            view = qs.get('view')
+            meds = view == 'meds'
+            if view == 'card':
+                from .emergency import card
+                doc = card(self.ctx.store, self.ctx.name)
+            elif meds:
+                doc = med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0')
+            else:
+                doc = summary(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
+                              qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS))
             pdf = qs.get('format') == 'pdf'
-            what = 'medicines-and-allergies' if meds else 'health-summary'
+            what = 'emergency-card' if view == 'card' else 'medicines-and-allergies' if meds else 'health-summary'
             fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-') + f'-{date.today().isoformat()}'
             disp = 'attachment' if qs.get('download') == '1' else 'inline'
             if pdf:

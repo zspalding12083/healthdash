@@ -240,7 +240,7 @@ if __name__ == '__main__':
     extract_all(sys.argv[1], sys.argv[2])
 
 
-# ---- saved web pages (browser plugin) ---------------------------------------------------
+# ---- web pages (inside health summary exports) ---------------------------------------------------
 
 def html_text(data):
     """Readable text of an HTML page: scripts and styles dropped, block elements on new lines,

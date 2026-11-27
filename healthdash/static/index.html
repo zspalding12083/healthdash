@@ -1057,7 +1057,9 @@ $('#rep').onclick = () => openReport();
 function printMedList(otc=true){ window.open(`/report?view=meds&p=${encodeURIComponent(PERSON)}${otc?'':'&otc=0'}`, '_blank'); }
 function openReport(){
   const box = (name, [v, l], on=true) => `<label><input type="checkbox" name="${name}" value="${v}" ${on?'checked':''}> ${esc(l)}</label>`;
-  show('<h2>Health summary to print</h2>', `<div class="ask-box" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>Just the medicines and allergies?</b> A one-page list of what's taken now, for a wallet, the fridge or a new doctor's form.</span>
+  show('<h2>Health summary to print</h2>', `<div class="ask-box" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>🚑 Emergency card</b> One page for paramedics, the ER or a caregiver: contacts, allergies, medicines, conditions, devices.</span>
+      <span><button class="btn primary" id="rcard">Print emergency card</button> <button class="btn" id="rcardpdf">PDF</button> <button class="btn" id="rcardedit">Edit details</button></span></div>
+    <div class="ask-box" style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span><b>Just the medicines and allergies?</b> A one-page list of what's taken now, for a wallet, the fridge or a new doctor's form.</span>
       <span><button class="btn primary" id="rmeds">Print medicines &amp; allergies</button> <button class="btn" id="rmedspdf">PDF</button> <label class="small"><input type="checkbox" id="rotc" checked> with over the counter</label></span></div>
     <p class="small muted" style="margin-top:0">Or the full summary: one page (as long as it needs) of what is going on and when: for a new doctor, a specialist or your own files. It opens in a new tab to print, or download it as a <b>PDF</b> or as a web page that opens in any browser.</p>
     <form class="edit" id="rf">
@@ -1084,6 +1086,42 @@ function openReport(){
   $('#rdl').onclick = () => { if(!bad()) save(url(true)); };
   $('#rpdf').onclick = () => { if(!bad()) save(url(true, true)); };
   $('#rmedspdf').onclick = () => save(`/report?view=meds&format=pdf&download=1&p=${encodeURIComponent(PERSON)}${$('#rotc').checked?'':'&otc=0'}`);
+  $('#rcard').onclick = () => window.open(`/report?view=card&p=${encodeURIComponent(PERSON)}`, '_blank');
+  $('#rcardpdf').onclick = () => save(`/report?view=card&format=pdf&download=1&p=${encodeURIComponent(PERSON)}`);
+  $('#rcardedit').onclick = () => editEmergency();
+}
+// the emergency card's own details: what no medical record says (contacts, blood type, devices, ...)
+const BLOOD = ['A+','A-','B+','B-','AB+','AB-','O+','O-','unknown'];
+async function editEmergency(){
+  let e; try{ e = await api('/api/emergency'); }catch(err){ return alert(err.message); }
+  const d = e.details, chosen = new Set(d.conditions);
+  const contacts = [...d.contacts, {}, {}, {}, {}].slice(0, 4);
+  const inp = (name, label, v, extra='') => `<label>${label}<input name="${name}" value="${esc(v||'')}" autocomplete="off" ${extra}></label>`;
+  show('<h2>Emergency card details</h2>', `<p class="muted small">Things no medical record says. Allergies, medicines and conditions come from the records.</p>
+    <form class="edit" id="ef">
+      ${inp('dob', 'Date of birth', d.dob, 'placeholder="1960-03-07"')}
+      <label>Blood type<select name="blood_type"><option value="">Not known</option>${BLOOD.map(b => `<option ${d.blood_type===b?'selected':''}>${b}</option>`).join('')}</select></label>
+      <fieldset class="wide"><legend class="small">Emergency contacts</legend>${contacts.map((c, i) =>
+        `<div style="display:flex;gap:6px;flex-wrap:wrap">${inp('c_name'+i, 'Name', c.name)}${inp('c_relation'+i, 'Relationship', c.relation, 'placeholder="Daughter"')}${inp('c_phone'+i, 'Phone', c.phone, 'type="tel"')}</div>`).join('')}</fieldset>
+      ${inp('doctor_name', 'Doctor', d.doctor.name)}${inp('doctor_phone', 'Doctor\'s phone', d.doctor.phone, 'type="tel"')}
+      ${inp('pharmacy_name', 'Pharmacy', d.pharmacy.name)}${inp('pharmacy_phone', 'Pharmacy phone', d.pharmacy.phone, 'type="tel"')}
+      <label class="wide">Insurance<input name="insurance" value="${esc(d.insurance)}" placeholder="Plan and member number, as on the card" autocomplete="off"></label>
+      <label class="wide">Implants and devices<textarea name="devices" rows="2" placeholder="Pacemaker, stent, joint replacement, insulin pump…">${esc(d.devices)}</textarea></label>
+      <label class="wide">Other important information<textarea name="notes" rows="3" placeholder="Takes a blood thinner, advance directive on file, hard of hearing…">${esc(d.notes)}</textarea></label>
+      <fieldset class="wide"><legend class="small">Conditions on the card${e.conditions.length ? ` (none ticked: the ${Math.min(12, e.conditions.length)} most recently noted)` : ''}</legend>
+        <div style="max-height:180px;overflow:auto">${e.conditions.map(c => `<label><input type="checkbox" name="conditions" value="${esc(c.id)}" ${chosen.has(c.id)?'checked':''}> ${esc(c.name)}${c.first_noted?` <span class="muted small">${fdate(c.first_noted)}</span>`:''}</label>`).join('') || '<span class="muted small">No current conditions recorded.</span>'}</div></fieldset>
+    </form>
+    <div class="row-actions"><button class="btn" id="eback">Back</button><button class="btn primary" id="esave">Save</button></div><p class="muted small" id="emsg"></p>`);
+  $('#eback').onclick = () => openReport();
+  $('#esave').onclick = async () => {
+    const f = new FormData($('#ef'));
+    const body = {dob: f.get('dob'), blood_type: f.get('blood_type'), insurance: f.get('insurance'), devices: f.get('devices'), notes: f.get('notes'),
+      doctor: {name: f.get('doctor_name'), phone: f.get('doctor_phone')}, pharmacy: {name: f.get('pharmacy_name'), phone: f.get('pharmacy_phone')},
+      contacts: [0,1,2,3].map(i => ({name: f.get('c_name'+i), relation: f.get('c_relation'+i), phone: f.get('c_phone'+i)})),
+      conditions: f.getAll('conditions')};
+    try{ await api('/api/emergency', {method:'PUT', body:JSON.stringify(body)}); openReport(); }
+    catch(err){ $('#emsg').textContent = err.message; }
+  };
 }
 async function watchUpload(id, t){
   for(let i = 0; i < 900; i++){
@@ -1151,7 +1189,7 @@ function signInOffPanel(){
 async function openAccounts(){
   const on = AUTH.auth;
   const users = on ? await api('/api/users') : [];
-  show(`<h2>Accounts</h2><div class="muted small">${on ? `Signed in as ${esc(ME)}. Everyone with an account can see and change everything, and manage accounts.` : 'Sign-in, the people on this dashboard and browser plugin keys.'}</div>`,
+  show(`<h2>Accounts</h2><div class="muted small">${on ? `Signed in as ${esc(ME)}. Everyone with an account can see and change everything, and manage accounts.` : 'Sign-in and the people on this dashboard.'}</div>`,
     (on ? `<div class="acct-list">${users.map(u => `<div><b>${esc(u.username)}</b><span><button class="btn" data-pw="${esc(u.username)}">Set password</button>
       <button class="btn danger" data-rm="${esc(u.username)}" ${users.length<2?'disabled':''}>Remove</button></span></div>`).join('')}</div>
     <h3>Add someone</h3><form class="edit" id="af"><label>User name<input name="username" autocapitalize="none" required></label>
@@ -1161,9 +1199,7 @@ async function openAccounts(){
     <h3>People</h3><div class="muted small">Each person's records are kept apart. Switch between them with the menu at the top.</div>
     <div class="acct-list" id="peoplelist"></div>
     <div class="row-actions" style="justify-content:flex-start"><button class="btn" id="addperson">＋ Add family member</button></div>
-    <div id="storagebox"></div>
-    <h3>Browser plugin keys</h3><div class="muted small">A key lets the Firefox plugin add files you view on patient portals. It can only add files, not read or change records. Shown once; paste it into the plugin's settings.</div>
-    <div class="acct-list" id="keylist"></div><div class="row-actions" style="justify-content:flex-start"><button class="btn" id="newkey">Create a key</button></div><div id="keyshow"></div>`);
+    <div id="storagebox"></div>`);
   $('#peoplelist').innerHTML = PEOPLE.map(p => `<div><span><b>${esc(p.name)}</b>${p.id===PERSON?' <span class="tag">showing</span>':''}</span>
     <span><button class="btn" data-show="${esc(p.id)}">Show</button> <button class="btn" data-rename="${esc(p.id)}">Rename</button></span></div>`).join('');
   $('#peoplelist').querySelectorAll('[data-show]').forEach(b => b.onclick = () => { switchPerson(b.dataset.show); dlg.close(); });
@@ -1174,14 +1210,6 @@ async function openAccounts(){
   });
   $('#addperson').onclick = () => addPerson();
   storagePanel();
-  const keys = await api('/api/keys');
-  $('#keylist').innerHTML = keys.length ? keys.map(k => `<div><span><b>${esc(k.label)}</b> <span class="muted small">${esc(k.username)} · made ${esc((k.created||'').slice(0,10))} · last used ${esc((k.last_used||'never').slice(0,10))}</span></span><button class="btn danger" data-revoke="${esc(k.id)}">Revoke</button></div>`).join('') : '<span class="muted small">No keys yet.</span>';
-  $('#keylist').querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => { if(!confirm('Revoke this key? The plugin using it stops working.')) return; await api('/api/keys/' + b.dataset.revoke, {method:'DELETE'}); openAccounts(); });
-  $('#newkey').onclick = async () => {
-    const label = prompt('Name for this key (which browser or computer):', 'Firefox'); if(label === null) return;
-    const k = await api('/api/keys', {method:'POST', body:JSON.stringify({label})});
-    $('#keyshow').innerHTML = `<div class="ask-box"><b>Copy this key now</b>; it won't be shown again.<pre class="doctext" style="user-select:all">${esc(k.key)}</pre><div class="small">Dashboard address for the plugin: <b>${esc(location.origin)}</b></div></div>`;
-  };
   if(!on){
     $('#turnon').onclick = async () => {
       const b = Object.fromEntries(new FormData($('#onf')).entries());
@@ -1308,7 +1336,7 @@ async function boot(){
   if(a.auth && !a.user) return showLogin(false);
   ME = a.user; AUTH = a;
   if(a.auth){ $('#acct').hidden = false; $('#acct').textContent = '👤 ' + a.user; }
-  else if(a.can_sign_in){ $('#acct').hidden = false; $('#acct').textContent = '👤 Accounts'; $('#acct').title = 'Sign-in is off. Accounts, people and plugin keys'; }
+  else if(a.can_sign_in){ $('#acct').hidden = false; $('#acct').textContent = '👤 Accounts'; $('#acct').title = 'Sign-in is off. Accounts and people'; }
   await loadPeople();
   const start = location.hash.slice(1);
   if(TABS.some(t => t[0]===start)) S.tab = start;

@@ -444,7 +444,7 @@ def labcorp_labs(text, facility=None):
     return out
 
 
-# ---- MyChart test result pages (saved by the browser plugin) ----------------------------
+# ---- MyChart test result pages (printed or saved from the portal) ----------------------------
 # "GLUCOSE" / "Normal range: 70 - 200 mg/dL" / "Your value is 368 mg/dLThis value is Abnormal..."
 # dated by "Collected on Nov 06, 2026 5:23 PM" or "Collection date:" + "Nov 06, 2026 ...".
 _MC_YOUR = re.compile(r'Your value is\s*(.+?)(?=This value is|Normal range:|$)')
@@ -457,7 +457,7 @@ _MC_NOT_NAME = re.compile(r'^(view trends|value|results|new|normal range:.*|your
 
 
 def mychart_labs(text, facility=None):
-    """Result rows from a MyChart test result page saved by the browser plugin."""
+    """Result rows from a MyChart test result page."""
     if 'Your value is' not in (text or ''):
         return []
     flat = re.sub(r'[ \t]+', ' ', text.replace('\f', '\n'))

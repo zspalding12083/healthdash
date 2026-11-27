@@ -3,7 +3,7 @@
 The first person ("main") is the dashboard's original database and files folder, so nothing moves
 when people are added. Everyone else lives under <state>/people/<id>/ (health.db, files/). The list
 of people is kept in the main database. Pages pick a person with the X-Person header (file links
-and the browser plugin use ?p=<id>); without one, requests go to the main person.
+use ?p=<id>); without one, requests go to the main person.
 """
 
 import os

@@ -1,5 +1,5 @@
 """Empty a dashboard to start over: every record, document and stored file, for the main person
-and everyone on the people menu. Sign-in accounts, plugin keys and the people menu itself stay.
+and everyone on the people menu. Sign-in accounts and the people menu itself stay.
 
 Run it with the dashboard stopped, as the user that owns the data:
   sudo systemctl stop healthdash
@@ -12,7 +12,7 @@ import sqlite3
 
 from .store import KINDS, Store
 
-# record tables plus bookkeeping that belongs to the records; never users, sessions, api_keys, people
+# record tables plus bookkeeping that belongs to the records; never users, sessions, people
 EXTRA = ['drug_alias', 'moved']
 
 
@@ -81,7 +81,7 @@ def wipe(db, files, yes=False, ask=input):
         raise SystemExit(f'no database at {db}')
     todo = targets(db, files)
     print('This empties every record, document and stored file for:', ', '.join(t[0] for t in todo))
-    print('Sign-in accounts, plugin keys and the people menu are kept. This cannot be undone.')
+    print('Sign-in accounts and the people menu are kept. This cannot be undone.')
     if not yes and ask('Type WIPE to go ahead: ').strip() != 'WIPE':
         print('nothing changed')
         return 1

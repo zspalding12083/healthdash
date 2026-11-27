@@ -128,19 +128,6 @@ class PeopleTests(unittest.TestCase):
     def test_unknown_person_refused(self):
         self.assertEqual(self.call('/api/summary', person='nobody')[0], 400)
 
-    def test_plugin_key_and_ingest_machine_pick_a_person(self):
-        self.call('/api/people', {'name': 'Sam'}, 'POST')
-        key = self.auth.create_key('ann', 'Firefox')['key']
-        code, up = self.call('/api/upload?source=plugin&p=sam&name=page.html',
-                             b'<html><body>' + b'Clinic visit notes for a sore throat. ' * 20 + b'</body></html>',
-                             'POST', headers={'Authorization': 'Bearer ' + key, 'Cookie': ''})
-        self.assertEqual(code, 202)
-        self.wait('sam')
-        self.assertTrue(self.people.get('sam').store.document(up['id']))
-        self.assertIsNone(self.store.document(up['id']))
-        self.assertEqual([p['id'] for p in self.call('/api/people', headers={'Authorization': 'Bearer ' + key, 'Cookie': ''})[1]],
-                         ['main', 'sam'])
-
     def test_people_and_main_records_survive_a_restart(self):
         self.call('/api/conditions', {'name': 'Migraine'}, 'POST')
         self.call('/api/people', {'name': 'Sam'}, 'POST')
