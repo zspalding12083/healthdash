@@ -38,7 +38,9 @@ header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px
 .brand small{display:block;font-weight:400;font-size:12px;color:var(--ink3)}
 #q{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 #q:focus{outline:2px solid var(--accent);outline-offset:-1px}
-nav{max-width:1200px;margin:0 auto;padding:0 10px;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+nav{max-width:1200px;margin:0 auto;padding:0 10px;display:flex;flex-wrap:wrap;gap:0 2px}
+/* phones: one row that scrolls sideways, faded at the edge so it's clear there are more tabs */
+@media (max-width:700px){nav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(to right,#000 85%,transparent);mask-image:linear-gradient(to right,#000 85%,transparent)}nav::-webkit-scrollbar{display:none}}
 nav button{border:0;background:none;padding:9px 11px;border-bottom:2px solid transparent;color:var(--ink2);cursor:pointer;white-space:nowrap}
 nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
 nav .sep{flex:1}
@@ -268,6 +270,7 @@ function renderTabs(review=0, questions=0){
   $('#tabs').innerHTML = TABS.map(([id,label]) => id==='sep' ? '<span class="sep"></span>' :
     `<button data-tab="${id}" class="${S.tab===id?'on':''} ">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}${id==='questions'&&questions?`<span class="badge soft" title="open questions">${questions}</span>`:''}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.tab));
+  const on = $('#tabs button.on'); if(on && $('#tabs').scrollWidth > $('#tabs').clientWidth) on.scrollIntoView({block:'nearest', inline:'nearest'});   // phones: keep the open tab in sight
 }
 function go(tab){ S.tab = tab; location.hash = tab; $('#q').value = ''; render(); }
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if(t && t!==S.tab && TABS.some(x=>x[0]===t)){ S.tab=t; render(); } });
