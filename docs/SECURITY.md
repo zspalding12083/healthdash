@@ -58,6 +58,13 @@ length limits and a checked date and blood type (`emergency.clean`); the card is
 escaped, nonce-only printout code as the other printouts. Like all records, anyone who can use the
 dashboard can read and change them. A printed or downloaded card is outside the dashboard's control.
 
+## Questions for the next visit (2026-11-27)
+
+Questions are ordinary entries (`store.KINDS`): bound SQL parameters, checked status and dates, a
+question can't be empty, and anyone who can use the dashboard can read and change them like any
+record. They are shown escaped on the page and drawn by the same escaped, nonce-only printout code
+as the other printouts; the `ask=` filter is cut to 100 characters and only compared, never run.
+
 ## Browser plugin removed (2026-11-27)
 
 The Firefox plugin and its keys are gone: there is no `Authorization: Bearer` access any more, no
@@ -66,7 +73,7 @@ when the dashboard starts (the `api_keys` table is dropped). Findings above that
 describe the code as it was then.
 
 Tests for each are in `tests/test_auth.py`, `tests/test_features.py`, `tests/test_storage.py` and
-`tests/test_emergency.py`.
+`tests/test_emergency.py` and `tests/test_questions.py`.
 
 ## Checked and found sound
 

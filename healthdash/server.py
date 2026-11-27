@@ -539,8 +539,9 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
         def _report(self, qs):
             """The printouts (report.py) for the chosen person. Options in the query: from, to (dates),
             sections and kinds (comma lists), order=oldest; or view=meds (with otc=0 to leave out
-            over-the-counter medicines) for the quick medicines-and-allergies list; or view=card for
-            the emergency card (emergency.py). format=pdf gives a
+            over-the-counter medicines) for the quick medicines-and-allergies list; view=card for
+            the emergency card (emergency.py); or view=questions (with ask=WHO for one doctor's) for
+            the questions to take to a visit (questions.py). format=pdf gives a
             PDF (pdf.py) instead of the page; download=1 saves either as a file."""
             from urllib.parse import urlencode
             from .report import HISTORY_KINDS, SECTIONS, med_list, summary, to_html
@@ -555,13 +556,16 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if view == 'card':
                 from .emergency import card
                 doc = card(self.ctx.store, self.ctx.name)
+            elif view == 'questions':
+                from .questions import sheet
+                doc = sheet(self.ctx.store, self.ctx.name, (qs.get('ask') or '').strip()[:100] or None)
             elif meds:
                 doc = med_list(self.ctx.store, self.ctx.name, otc=qs.get('otc') != '0')
             else:
                 doc = summary(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
                               qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS))
             pdf = qs.get('format') == 'pdf'
-            what = 'emergency-card' if view == 'card' else 'medicines-and-allergies' if meds else 'health-summary'
+            what = {'card': 'emergency-card', 'meds': 'medicines-and-allergies', 'questions': 'questions'}.get(view, 'health-summary')
             fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-') + f'-{date.today().isoformat()}'
             disp = 'attachment' if qs.get('download') == '1' else 'inline'
             if pdf:

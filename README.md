@@ -49,6 +49,11 @@ Mac on the home network.
   prescription medicines, the conditions you choose, implants and devices, recent surgeries, doctor,
   pharmacy, insurance and anything else to know first. **Edit details** holds what no medical
   record says; the rest comes from the records. Print it or download it as a PDF to keep on a phone.
+- **Questions for the next visit**: the **Questions** tab. Write a question down when it comes up,
+  optionally with who to ask (a doctor, a clinic or a kind of doctor) and marked important. **Print the
+  list** to take along, grouped by doctor with room to write the answers (or one doctor's questions
+  on their own, or a PDF). Afterwards, **Answered…** notes what was said and at which visit; the
+  visit then shows the questions answered there, and search finds them.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
   per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
   it would change (started, stopped, a dose that differs, one drug under two names) before saving
@@ -280,6 +285,7 @@ healthdash/
   codes.py      medical codes (ICD-10, SNOMED CT, CPT, ...): read, checked, written one way
   report.py     the printouts: health summary, medicines and allergies (HTML or PDF)
   emergency.py  the emergency card and its details (contacts, blood type, devices, ...)
+  questions.py  questions for the next visit: grouping and the list to take along
   pdf.py        a small PDF writer for them (standard library only)
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes

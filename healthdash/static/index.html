@@ -119,6 +119,12 @@ form.edit .wide{grid-column:1/-1}
 .row-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .empty{padding:30px;text-align:center;color:var(--ink3)}
 .fin-note{font-size:13px;color:var(--ink3);margin:-4px 0 12px}
+.badge.soft{background:var(--line2);color:var(--ink2)}
+.qadd{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 14px}.qadd input[name=question]{flex:3 1 260px}.qadd input[name=ask]{flex:1 1 150px}
+.qadd input[type=text],.qadd input:not([type]){padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
+.q-group h3{margin:14px 0 4px}.q-item{display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--line2)}
+.q-item .q-text{flex:1}.q-item .q-text>b{white-space:pre-wrap}.q-item .q-text b.imp{color:var(--warn)}.q-item .btn{padding:3px 9px;font-size:12.5px}
+.q-answer{margin-top:3px;color:var(--ink2);white-space:pre-wrap}
 .tray{position:fixed;right:16px;bottom:16px;width:min(380px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;z-index:50}
 .tray .item{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 4px 18px rgba(0,0,0,.15);font-size:14px}
 .tray .item .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -184,12 +190,12 @@ details.panel[open] summary{margin-bottom:10px}
 <script>
 'use strict';
 const TABS = [
-  ['timeline','Timeline'],['life','Life events'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
+  ['timeline','Timeline'],['questions','Questions'],['life','Life events'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
   ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['vaccines','Vaccines'],['providers','Doctors'],
   ['documents','Documents'],['review','Needs review']
 ];
 const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
-  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor',life_events:'Life event'};
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor',life_events:'Life event',questions:'Question'};
 const FIELDS = {
   encounters:['date','end_date','type','facility','provider','reason','summary'],
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
@@ -202,9 +208,10 @@ const FIELDS = {
   immunizations:['date','name','product','lot','manufacturer','facility','provider','notes'],
   providers:['name','specialty','facility','phone','notes'],
   life_events:['date','end_date','title','category','health_effect','notes'],
+  questions:['question','ask','important','date','status','answer','answered_on','encounter_id'],
 };
 // field names shown on forms and record pages (otherwise the name with spaces for underscores)
-const LABELS = {end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
+const LABELS = {ask:'who to ask', answered_on:'answered on', end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
 const label = f => LABELS[f] || f.replace(/_/g,' ');
 // the codes field on each kind of entry: an example, and which code systems fit
 const CODE_HELP = {conditions:['e.g. ICD-10 M54.50; SNOMED 279039007', 'Diagnosis codes (ICD-10, ICD-9, SNOMED CT)'],
@@ -215,8 +222,8 @@ const LIFE_CATEGORIES = ['Accident or injury','Family','Loss or grief','Work or 
 // medical codes ("ICD-10-CM M54.50; CPT 22612") as small tags
 function codeTags(t){ return (t||'').split(/;\s*/).filter(Boolean).map(c => `<span class="code">${esc(c)}</span>`).join(''); }
 // the name an entry is shown by, whatever its kind
-function recName(r){ return r.name||r.title||r.reason||r.analyte||r.description||r.substance||r.payee||''; }
-const LONG = new Set(['summary','result','notes','description','reason','health_effect']);
+function recName(r){ return r.name||r.question||r.title||r.reason||r.analyte||r.description||r.substance||r.payee||''; }
+const LONG = new Set(['summary','result','notes','description','reason','health_effect','question','answer']);
 const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging','immunizations','life_events']), year:'', fac:''}};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -253,9 +260,9 @@ $('#theme').onclick = () => {
 };
 
 // ---------- tabs & routing ----------
-function renderTabs(review=0){
+function renderTabs(review=0, questions=0){
   $('#tabs').innerHTML = TABS.map(([id,label]) => id==='sep' ? '<span class="sep"></span>' :
-    `<button data-tab="${id}" class="${S.tab===id?'on':''} ">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}</button>`).join('');
+    `<button data-tab="${id}" class="${S.tab===id?'on':''} ">${label}${id==='review'&&review?`<span class="badge">${review}</span>`:''}${id==='questions'&&questions?`<span class="badge soft" title="open questions">${questions}</span>`:''}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.tab));
 }
 function go(tab){ S.tab = tab; location.hash = tab; $('#q').value = ''; render(); }
@@ -266,7 +273,7 @@ $('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTime
 
 async function render(){
   const sum = await load('summary','/api/summary');
-  renderTabs(sum.needs_review + (sum.checks || 0));
+  renderTabs(sum.needs_review + (sum.checks || 0), sum.open_questions || 0);
   $('#span').textContent = sum.first_date ? `Records ${sum.first_date.slice(0,4)} to ${sum.last_date.slice(0,4)}` : '';
   const m = $('#main');
   try{
@@ -441,6 +448,94 @@ VIEWS.conditions = async () => recordTable('conditions', await load('conditions'
 VIEWS.life = async () => recordTable('life_events', await load('life_events','/api/life_events'),
   [['date','When'],['end_date','Until','hide-sm'],['title','What happened'],['category','Kind'],['health_effect','How it may affect health','hide-sm']], 'Life events',
   {note:'Things outside medical care that may bear on health: a car accident, a fall, a death or illness in the family, a new job, a move, a stressful time. They show on the Timeline and in the printed summary.'});
+
+// ---------- questions for the next visit (questions.py) ----------
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+function downloadUrl(href){ const a = document.createElement('a'); a.href = href; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+// who a question can be for: doctors and clinics in the records, and whoever earlier questions named
+async function askers(){
+  const [provs, qs] = await Promise.all([load('providers','/api/providers'), load('questions','/api/questions')]);
+  const names = [...provs.map(p => p.name), ...provs.map(p => p.specialty), ...qs.map(q => q.ask)].map(x => (x||'').trim()).filter(Boolean);
+  return [...new Map(names.map(n => [n.toLowerCase(), n])).values()].sort((a,b) => a.localeCompare(b));
+}
+// open questions by who to ask (names alike apart from case and spacing go together, under the
+// spelling used most, or with more capitals), named groups first; the same as questions.groups
+function questionGroups(open){
+  const g = new Map(), tidy = w => (w||'').trim().split(/\s+/).join(' ');
+  for(const q of open){ const key = tidy(q.ask).toLowerCase(); if(!g.has(key)) g.set(key, []); g.get(key).push(q); }
+  const caps = w => (w.match(/[A-Z]/g)||[]).length;
+  const name = items => { const sp = items.map(q => tidy(q.ask)), n = w => sp.filter(x => x === w).length;
+    return sp.reduce((best, w) => n(w) > n(best) || (n(w) === n(best) && caps(w) > caps(best)) ? w : best); };
+  return [...g.entries()].sort(([a],[b]) => (a==='') - (b==='') || (a < b ? -1 : a > b ? 1 : 0)).map(([k, items]) => ({who: k ? name(items) : '', items}));
+}
+const questionsUrl = (ask, pdf) => '/report?' + new URLSearchParams({view:'questions', p:PERSON, ...(ask?{ask}:{}), ...(pdf?{format:'pdf', download:'1'}:{})});
+VIEWS.questions = async () => {
+  const qs = await load('questions','/api/questions');
+  const enc = await load('encounters','/api/encounters'), visit = Object.fromEntries(enc.map(e => [e.id, e]));
+  const open = qs.filter(q => (q.status||'open') === 'open').sort((a,b) => (b.important||0) - (a.important||0) || (a.date||'').localeCompare(b.date||''));
+  const done = qs.filter(q => q.status === 'answered').sort((a,b) => (b.answered_on||b.date||'').localeCompare(a.answered_on||a.date||''));
+  const names = await askers();
+  const item = q => `<div class="q-item"><div class="q-text">${q.important?'<b class="imp" title="important">! </b>':''}<b>${esc(q.question)}</b>
+      <div class="muted small">written down ${fdate(q.date)}</div></div>
+    <button class="btn primary" data-qanswer="${esc(q.id)}">Answered…</button><button class="btn" data-open="questions|${esc(q.id)}">Edit</button></div>`;
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h2>Questions for the next visit (${open.length})</h2>
+    <span><button class="btn" data-qprint="">🖨 Print the list</button> <button class="btn" data-qpdf="">PDF</button></span></div>
+    <p class="fin-note">Write questions down as they come up, take the list to the visit, and note the answers afterwards. Questions for one doctor can be printed on their own.</p>
+    <form class="qadd" id="qadd"><input name="question" placeholder="A question to ask…" autocomplete="off" maxlength="1000">
+      <input name="ask" list="askers" placeholder="Who to ask (optional)" autocomplete="off" maxlength="100"><datalist id="askers">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" name="important"> Important</label>
+      <button class="btn primary">Add</button><span class="muted small" id="qmsg"></span></form>`;
+  if(!open.length) html += '<div class="empty">No open questions. Add one above when it comes to mind.</div>';
+  for(const g of questionGroups(open))
+    html += `<div class="q-group"><h3>${g.who ? 'For ' + esc(g.who) : 'Any doctor'} <span class="muted small">(${g.items.length})</span>
+      ${g.who?`<button class="btn" style="padding:2px 8px;font-size:12px;margin-left:6px" data-qprint="${esc(g.who)}" title="Only these, plus the ones for any doctor">🖨 Print for ${esc(g.who)}</button>`:''}</h3>${g.items.map(item).join('')}</div>`;
+  html += '</div>';
+  html += `<div class="panel"><h2>Answered (${done.length})</h2>` + (done.length ? done.map(q => `<div class="q-item"><div class="q-text"><b>${esc(q.question)}</b>
+      <div class="q-answer">${q.answer ? esc(q.answer) : '<span class="muted">No answer written down.</span>'}</div>
+      <div class="muted small">${q.ask?esc(q.ask)+' · ':''}${q.answered_on?'answered '+fdate(q.answered_on):''}${q.encounter_id&&visit[q.encounter_id]?` · <a href="#" data-open="encounters|${esc(q.encounter_id)}">the visit</a>`:''}</div></div>
+      <button class="btn" data-open="questions|${esc(q.id)}">Edit</button></div>`).join('') : '<div class="empty">Answers you note down show here.</div>') + '</div>';
+  setTimeout(bindQuestions);
+  return html;
+};
+function bindQuestions(){
+  const f = $('#qadd'); if(!f) return;
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    const d = new FormData(f), question = (d.get('question')||'').trim();
+    if(!question){ $('#qmsg').textContent = 'Type the question first.'; return; }
+    try{ await api('/api/questions', {method:'POST', body:JSON.stringify({question, ask:(d.get('ask')||'').trim(), important:d.get('important')?1:0})}); }
+    catch(e){ $('#qmsg').textContent = e.message; return; }
+    const ask = (d.get('ask')||'').trim();
+    invalidate(); await render(); const q = $('#qadd [name=question]'); if(q){ $('#qadd [name=ask]').value = ask; q.focus(); }
+  };
+  document.querySelectorAll('[data-qanswer]').forEach(b => b.onclick = () => answerQuestion(b.dataset.qanswer));
+  document.querySelectorAll('[data-qprint]').forEach(b => b.onclick = () => window.open(questionsUrl(b.dataset.qprint), '_blank'));
+  document.querySelectorAll('[data-qpdf]').forEach(b => b.onclick = () => downloadUrl(questionsUrl(b.dataset.qpdf, true)));
+}
+// the visits a question may have been answered at: the most recent ones, the one on that day first
+function visitOptions(enc, chosen, day){
+  const recent = enc.filter(e => e.date).sort((a,b) => b.date.localeCompare(a.date)).slice(0, 30);
+  if(chosen && !recent.some(e => e.id === chosen)){ const c = enc.find(e => e.id === chosen); if(c) recent.unshift(c); }
+  const pick = chosen || (recent.find(e => e.date === day) || {}).id;
+  return `<option value="">(not in the records)</option>` + recent.map(e => `<option value="${esc(e.id)}" ${e.id===pick?'selected':''}>${fdate(e.date)}: ${esc(e.type||'Visit')}${e.facility?', '+esc(e.facility):''}${e.provider?' ('+esc(e.provider)+')':''}</option>`).join('');
+}
+async function answerQuestion(id){
+  const q = await api('/api/questions/' + encodeURIComponent(id));
+  const enc = await load('encounters','/api/encounters'), day = q.answered_on || today();
+  show(`<h2>${esc(q.question)}</h2><div class="muted small">${q.ask?'For '+esc(q.ask)+' · ':''}written down ${fdate(q.date)}</div>`,
+    `<form class="edit" id="qaf"><label class="wide">What was the answer?<textarea name="answer" rows="5">${esc(q.answer||'')}</textarea></label>
+      <label>Answered on<input name="answered_on" value="${esc(day)}" placeholder="YYYY-MM-DD"></label>
+      <label class="wide">At which visit<select name="encounter_id">${visitOptions(enc, q.encounter_id, day)}</select></label></form>
+    <div class="row-actions"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save the answer</button></div><p class="muted small" id="msg"></p>`);
+  $('#qaf [name=answered_on]').onchange = ev => { const v = ev.target.value.trim(), sel = $('#qaf [name=encounter_id]'); if(!sel.value){ const m = enc.find(e => e.date === v); if(m) sel.value = m.id; } };
+  $('#cancel').onclick = () => dlg.close();
+  $('#save').onclick = async () => {
+    const d = new FormData($('#qaf'));
+    try{ await api('/api/questions/' + encodeURIComponent(id), {method:'PUT', body:JSON.stringify({status:'answered', answer:d.get('answer'), answered_on:(d.get('answered_on')||'').trim(), encounter_id:d.get('encounter_id')})}); }
+    catch(e){ $('#msg').textContent = e.message; return; }
+    dlg.close(); invalidate(); render();
+  };
+}
 
 VIEWS.providers = async () => recordTable('providers', await load('providers','/api/providers'),
   [['name','Name'],['specialty','Specialty'],['facility','Practice / hospital'],['phone','Phone','hide-sm']], 'Doctors and care team');
@@ -727,17 +822,25 @@ async function openRecord(kind, id){
   const byId = Object.fromEntries(docs.map(d => [d.id,d]));
   const kv = FIELDS[kind].filter(f => r[f] != null && r[f] !== '').map(f => {
     let v = r[f];
-    if(f.includes('date') || f==='first_noted') v = fdate(v);
+    if(f==='date' && kind==='questions') return `<div>written down</div><div>${fdate(v)}</div>`;
+    if(f.includes('date') || f==='first_noted' || f==='answered_on') v = fdate(v);
     else if(f==='charged') v = money(v);
-    else if(f==='abnormal') v = v ? 'Yes' : 'No';
+    else if(f==='abnormal' || f==='important') v = v ? 'Yes' : 'No';
     else if(f==='encounter_id') return `<div>Visit</div><div><a href="#" data-open="encounters|${esc(v)}">open the visit</a></div>`;
     else if(f==='codes') return `<div>${label(f)}</div><div>${codeTags(v)}</div>`;
     return `<div>${label(f)}</div><div style="white-space:pre-wrap">${esc(v)}</div>`;
   }).join('');
   const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}" data-date="${esc(r.date||r.start_date||r.first_noted||'')}" data-end="${esc(r.end_date||'')}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
   show(`<h2>${esc(recName(r)||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
-    `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
+    `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:kind==='questions'?'':'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
   $('#ed').onclick = () => editRecord(kind, r);
+  if(kind === 'encounters'){   // questions noted as answered at this visit
+    const qs = (await load('questions','/api/questions')).filter(q => q.encounter_id === r.id);
+    if(qs.length && $('#dlg-body .kv')){
+      $('#dlg-body .kv').insertAdjacentHTML('afterend', `<div id="qvisit"><h3>Questions answered at this visit</h3>${qs.map(q => `<div class="hit" data-open="questions|${esc(q.id)}"><b>${esc(q.question)}</b><div class="q-answer small">${esc(q.answer||'')}</div></div>`).join('')}</div>`);
+      bind($('#qvisit'));
+    }
+  }
   if(r.needs_review) $('#rok').onclick = async () => { await markReviewed(kind, r.id); nextReview({rec:kind+'|'+r.id}); };
 }
 
@@ -780,6 +883,13 @@ function editRecord(kind, r){
   const inputs = FIELDS[kind].map(f => {
     const v = r[f] ?? '';
     const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','num'].includes(f) ? 'number" step="any' : 'text';
+    if(kind==='questions'){
+      if(f==='important') return `<label>Important<select name="important"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes, ask it first</option></select></label>`;
+      if(f==='status') return `<label>Status<select name="status">${['open','answered'].map(o=>`<option ${o===(v||'open')?'selected':''}>${o}</option>`).join('')}</select></label>`;
+      if(f==='ask') return `<label>Who to ask<input name="ask" value="${esc(v)}" list="askers" autocomplete="off" placeholder="a doctor, clinic or kind of doctor"></label>`;
+      if(f==='date') return `<label>Written down<input name="date" value="${esc(v)}" placeholder="YYYY-MM-DD"></label>`;
+      if(f==='encounter_id' && S.data.encounters) return `<label class="wide">Answered at the visit<select name="encounter_id">${visitOptions(S.data.encounters, v, r.answered_on)}</select></label>`;
+    }
     if(f==='abnormal') return `<label>Abnormal<select name="${f}"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes</option></select></label>`;
     if(f==='status' && kind==='medications') return `<label>Status<select name="status">${['active','stopped','as needed',''].map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></label>`;
     if(f==='category' && kind==='life_events') return `<label>Kind<input name="category" list="life-cats" value="${esc(v)}" autocomplete="off"><datalist id="life-cats">${LIFE_CATEGORIES.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></label>`;

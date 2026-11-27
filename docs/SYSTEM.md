@@ -39,6 +39,7 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 | `codes.py` | Medical codes on conditions and procedures (ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, HCPCS, ICD-10-PCS) and medications (RxNorm): read from C-CDA and FHIR (only the systems that fit the kind of entry, `FOR_KIND`), checked and written one way when typed, merged when entries merge. No code tables, no lookups. |
 | `report.py` | The printouts: the health summary (`summary`: current conditions, allergies and medicines, procedures, life events, flagged labs, a dated history, past conditions and medicines) and the quick list of allergies and current medicines (`med_list`). Each is built once as a list of blocks, then drawn as a self-contained HTML page (`to_html`) or a PDF. |
 | `emergency.py` | The emergency card (`card`): contacts, blood type, allergies, prescription medicines, chosen conditions, devices, recent procedures, doctor, pharmacy, insurance. Its own details are the setting `emergency` in each person's database (`load`, `save`, checked by `clean`). |
+| `questions.py` | Questions for the next visit: open ones by who to ask (`groups`), and the list to take along (`sheet`), with room to write the answers. |
 | `pdf.py` | A small PDF writer (standard library only): report blocks on US Letter pages in the PDF base fonts (Helvetica), tables that continue across pages with their headings, "page N of M". Latin-1 text; common typographic characters are written plainly. |
 | `checks.py` | Record checks: questions on the Review tab about likely mistakes (see below). |
 | `extract.py` | Text of PDFs (with OCR for scanned pages), office files, web pages, and DICOMDIR headers of imaging discs; cached by sha256. |
@@ -68,7 +69,7 @@ The database stays in the data folder.
   Imported health summaries also get one readable page per document they contain.
 - **One table per kind of record** (`KINDS` in `store.py`): `encounters` (visits), `tests`, `labs`,
   `procedures`, `medications`, `conditions`, `allergies`, `imaging`, `immunizations`, `providers`,
-  `life_events`.
+  `life_events`, `questions`.
   Every row also has `id`, `docs` (the documents it came from), `needs_review`, `edited`, `origin`
   (`import` or `manual`) and `updated`. Imported rows have stable ids (`ccda-...`), so importing
   the same file again updates instead of doubling.
@@ -84,6 +85,10 @@ The database stays in the data folder.
   illness in the family, a move, a stressful time): date (a year or month is fine), until, title,
   kind (`LIFE_CATEGORIES` are offered, any word is kept), how it may affect health, notes. Entered by
   hand only; shown on the Timeline, their own tab and the printed summary.
+- **questions**: questions to ask at a coming visit: question, who to ask (`ask`; empty = anyone),
+  `important`, `date` (written down; today when left empty), `status` (`open` or `answered`), the
+  answer, `answered_on` and the visit (`encounter_id`). Entered by hand only; their own tab, a count
+  on it, and the visit they were answered at.
 - **moved**: entries and files deleted on the dashboard (or moved to another person), so an import
   doesn't bring them back.
 - **setting**: key/value settings, including what the record checks learned (below) and the
@@ -200,7 +205,8 @@ YYYY-MM or YYYY-MM-DD), `sections` (comma list of `overview, procedures, life, l
 immunizations, life_events`), `order=oldest`, `download=1` (the same page as an `.html` file),
 `format=pdf` (a PDF instead; with `download=1` saved as a file). `view=meds` gives the quick list of
 allergies and current medicines instead (`otc=0` leaves out over-the-counter ones); `view=card`
-the emergency card. `GET /api/emergency` gives the card's details and the current conditions to
+the emergency card; `view=questions` the open questions to take to a visit (`ask=` for one doctor's,
+with the ones for anyone). `GET /api/emergency` gives the card's details and the current conditions to
 choose from; `PUT /api/emergency` saves the details. The
 page allows no outside content and only its own Print script (a per-page nonce, also in a meta tag
 so a saved copy keeps the rule).

@@ -34,6 +34,8 @@ KINDS = {
     'providers': ['name', 'specialty', 'facility', 'phone', 'notes'],
     # things in life that may bear on health (an accident, a death in the family, a move), entered by hand
     'life_events': ['date', 'end_date', 'category', 'title', 'notes', 'health_effect'],
+    # questions to ask at a coming visit (date = when added), and what the answer was (questions.py)
+    'questions': ['date', 'question', 'ask', 'important', 'status', 'answer', 'answered_on', 'encounter_id'],
 }
 # kinds that carry medical codes (see codes.py), in their `codes` field
 CODED = {'conditions', 'procedures', 'medications'}
@@ -44,8 +46,9 @@ NUMERIC = {'num'}
 DELETED = '(deleted)'   # in the moved table: deleted on the dashboard, not moved to a person
 DROPPED = {}  # removed columns, erased on open
 DROPPED_TABLES = ['financial']  # bills and estimates are no longer kept
-INTEGER = {'abnormal'}
-DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted'}
+INTEGER = {'abnormal', 'important'}
+QUESTION_STATUS = ('open', 'answered')
+DATE_FIELDS = {'date', 'end_date', 'start_date', 'first_noted', 'answered_on'}
 DOC_FIELDS = ['path', 'orig_path', 'title', 'doc_date', 'category', 'facility', 'pages', 'ocr_pages',
               'size', 'ext', 'summary', 'organized_path', 'status', 'review_note']
 ADDED = {'documents': ['status TEXT', 'review_note TEXT', 'duplicate_of TEXT', 'classified TEXT',
@@ -342,6 +345,11 @@ class Store:
                 if f in DATE_FIELDS and v and not DATE_RE.match(v):
                     raise ValidationError(f'{f} must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
                 out[f] = v
+        if kind == 'questions':
+            if out.get('status') not in (None,) + QUESTION_STATUS:
+                raise ValidationError('status must be open or answered')
+            if ('question' in out or not partial) and not out.get('question'):
+                raise ValidationError('type the question')
         if 'docs' in data:
             docs = data['docs'] or []
             if isinstance(docs, str):
@@ -365,7 +373,8 @@ class Store:
             raise ValidationError(f'unknown kind: {kind}')
         order = {'medications': 'COALESCE(end_date, "9999") DESC, start_date DESC, name',
                  'conditions': 'status, name', 'allergies': 'substance',
-                 'providers': 'name'}.get(kind, 'date DESC, id')
+                 'providers': 'name',
+                 'questions': "status='answered', important DESC, date DESC, id"}.get(kind, 'date DESC, id')
         rows = [self._decode(r) for r in self._rows(f'SELECT * FROM {kind} ORDER BY {order}')]
         if kind == 'medications':
             given = self._given_ids(rows)
@@ -411,6 +420,9 @@ class Store:
         rid = str(data.get('id') or f'{kind[:3]}-{datetime.now().strftime("%Y%m%d%H%M%S%f")}')
         rec.update(id=rid, origin='manual', edited=1, updated=now())
         rec.setdefault('docs', '[]')
+        if kind == 'questions':
+            rec['status'] = rec['status'] or 'open'
+            rec['date'] = rec['date'] or datetime.now().strftime('%Y-%m-%d')   # today here, not in UTC
         cols = ', '.join(rec)
         with self.lock:
             self.db.execute(f'INSERT INTO {kind} ({cols}) VALUES ({", ".join("?" * len(rec))})',
@@ -1332,7 +1344,8 @@ class Store:
             checks = len(issues(self))
         except Exception:  # noqa: BLE001 - a check that fails must never break the dashboard
             checks = 0
-        return {'counts': c, 'needs_review': review, 'checks': checks,
+        open_q = self.db.execute("SELECT COUNT(*) FROM questions WHERE coalesce(status, 'open')='open'").fetchone()[0]
+        return {'counts': c, 'needs_review': review, 'checks': checks, 'open_questions': open_q,
                 'current_meds': [self._decode(r) for r in current],
                 'last_visit': self._decode(last[0]) if last else None,
                 'first_date': span[0], 'last_date': span[1]}
