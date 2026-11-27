@@ -7,7 +7,8 @@ specialist visit or a person's own files. /report shows the summary, where the b
 /report?download=1 gives the same page as a file and /report?format=pdf a PDF. /report?view=meds is
 the quick list of current medicines and allergies, for a wallet, the fridge or a new doctor's
 forms. /report?view=card is the emergency card (emergency.py) and
-/report?view=questions the questions to take to a visit (questions.py). The HTML page has no outside links, fonts or scripts beyond its Print button, so a downloaded
+/report?view=questions the questions to take to a visit (questions.py) and
+/report?view=readings the home readings log (readings.py). The HTML page has no outside links, fonts or scripts beyond its Print button, so a downloaded
 copy reads the same anywhere.
 
 Summary sections, in order (each can be left out with the `sections` option):

@@ -36,13 +36,15 @@ KINDS = {
     'life_events': ['date', 'end_date', 'category', 'title', 'notes', 'health_effect'],
     # questions to ask at a coming visit (date = when added), and what the answer was (questions.py)
     'questions': ['date', 'question', 'ask', 'important', 'status', 'answer', 'answered_on', 'encounter_id'],
+    # measured at home: blood pressure (reading/reading2), pulse, weight, blood sugar, ... (readings.py)
+    'readings': ['date', 'time', 'type', 'reading', 'reading2', 'unit', 'notes'],
 }
 # kinds that carry medical codes (see codes.py), in their `codes` field
 CODED = {'conditions', 'procedures', 'medications'}
 # what a life event can be; the dashboard offers these, any other word is kept as typed
 LIFE_CATEGORIES = ['Accident or injury', 'Family', 'Loss or grief', 'Work or school', 'Move or home',
                    'Stress', 'Pregnancy or birth', 'Travel', 'Other']
-NUMERIC = {'num'}
+NUMERIC = {'num', 'reading', 'reading2'}
 DELETED = '(deleted)'   # in the moved table: deleted on the dashboard, not moved to a person
 DROPPED = {}  # removed columns, erased on open
 DROPPED_TABLES = ['financial']  # bills and estimates are no longer kept
@@ -345,6 +347,12 @@ class Store:
                 if f in DATE_FIELDS and v and not DATE_RE.match(v):
                     raise ValidationError(f'{f} must look like YYYY-MM-DD (or YYYY-MM, YYYY)')
                 out[f] = v
+        if kind == 'readings':
+            if out.get('time') and not re.match(r'^([01]\d|2[0-3]):[0-5]\d$', out['time']):
+                raise ValidationError('time must look like 08:15 or 20:30')
+            for f, what in (('type', 'what was measured'), ('reading', 'the reading'), ('date', 'the date')):
+                if (f in out or not partial) and out.get(f) is None:
+                    raise ValidationError(f'{what} is needed')
         if kind == 'questions':
             if out.get('status') not in (None,) + QUESTION_STATUS:
                 raise ValidationError('status must be open or answered')
@@ -374,8 +382,13 @@ class Store:
         order = {'medications': 'COALESCE(end_date, "9999") DESC, start_date DESC, name',
                  'conditions': 'status, name', 'allergies': 'substance',
                  'providers': 'name',
-                 'questions': "status='answered', important DESC, date DESC, id"}.get(kind, 'date DESC, id')
+                 'questions': "status='answered', important DESC, date DESC, id",
+                 'readings': "date DESC, time DESC, id"}.get(kind, 'date DESC, id')
         rows = [self._decode(r) for r in self._rows(f'SELECT * FROM {kind} ORDER BY {order}')]
+        if kind == 'readings':
+            from .readings import flag
+            for r in rows:
+                r['flag'] = flag(r)   # outside common ranges (readings.py), for the dashboard
         if kind == 'medications':
             given = self._given_ids(rows)
             for r in rows:

@@ -125,6 +125,9 @@ form.edit .wide{grid-column:1/-1}
 .q-group h3{margin:14px 0 4px}.q-item{display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--line2)}
 .q-item .q-text{flex:1}.q-item .q-text>b{white-space:pre-wrap}.q-item .q-text b.imp{color:var(--warn)}.q-item .btn{padding:3px 9px;font-size:12.5px}
 .q-answer{margin-top:3px;color:var(--ink2);white-space:pre-wrap}
+.radd{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 6px}.radd input,.radd select{padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
+.radd input.n{width:6.5em}.radd input.d{width:8.5em}.radd input.t{width:5.5em}.radd input.u{width:5.5em}.radd input[name=notes]{flex:1 1 160px}
+.rlatest{font-size:22px;font-weight:700}.rstats{color:var(--ink2);font-size:13px;margin:2px 0 8px}
 .tray{position:fixed;right:16px;bottom:16px;width:min(380px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;z-index:50}
 .tray .item{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 4px 18px rgba(0,0,0,.15);font-size:14px}
 .tray .item .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -191,11 +194,11 @@ details.panel[open] summary{margin-bottom:10px}
 'use strict';
 const TABS = [
   ['timeline','Timeline'],['questions','Questions'],['life','Life events'],['meds','Medications'],['visits','Visits'],['tests','Tests'],['imaging','Imaging'],
-  ['labs','Lab trends'],['procedures','Procedures'],['conditions','Conditions'],['vaccines','Vaccines'],['providers','Doctors'],
+  ['labs','Lab trends'],['readings','Home readings'],['procedures','Procedures'],['conditions','Conditions'],['vaccines','Vaccines'],['providers','Doctors'],
   ['documents','Documents'],['review','Needs review']
 ];
 const KIND_LABEL = {encounters:'Visit',tests:'Test',labs:'Lab',procedures:'Procedure',medications:'Medication',
-  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor',life_events:'Life event',questions:'Question'};
+  conditions:'Condition',allergies:'Allergy',imaging:'Imaging',immunizations:'Vaccine',providers:'Doctor',life_events:'Life event',questions:'Question',readings:'Home reading'};
 const FIELDS = {
   encounters:['date','end_date','type','facility','provider','reason','summary'],
   tests:['date','category','name','body_part','facility','provider','result','abnormal','encounter_id'],
@@ -209,9 +212,10 @@ const FIELDS = {
   providers:['name','specialty','facility','phone','notes'],
   life_events:['date','end_date','title','category','health_effect','notes'],
   questions:['question','ask','important','date','status','answer','answered_on','encounter_id'],
+  readings:['type','date','time','reading','reading2','unit','notes'],
 };
 // field names shown on forms and record pages (otherwise the name with spaces for underscores)
-const LABELS = {ask:'who to ask', answered_on:'answered on', end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
+const LABELS = {reading:'reading', reading2:'second number (diastolic)', ask:'who to ask', answered_on:'answered on', end_date:'until', health_effect:'how it may affect health', first_noted:'first noted', codes:'medical codes'};
 const label = f => LABELS[f] || f.replace(/_/g,' ');
 // the codes field on each kind of entry: an example, and which code systems fit
 const CODE_HELP = {conditions:['e.g. ICD-10 M54.50; SNOMED 279039007', 'Diagnosis codes (ICD-10, ICD-9, SNOMED CT)'],
@@ -222,7 +226,7 @@ const LIFE_CATEGORIES = ['Accident or injury','Family','Loss or grief','Work or 
 // medical codes ("ICD-10-CM M54.50; CPT 22612") as small tags
 function codeTags(t){ return (t||'').split(/;\s*/).filter(Boolean).map(c => `<span class="code">${esc(c)}</span>`).join(''); }
 // the name an entry is shown by, whatever its kind
-function recName(r){ return r.name||r.question||r.title||r.reason||r.analyte||r.description||r.substance||r.payee||''; }
+function recName(r){ return r.name||r.question||r.title||r.reason||r.analyte||r.description||r.substance||r.payee||(r.reading!=null?readingName(r):''); }
 const LONG = new Set(['summary','result','notes','description','reason','health_effect','question','answer']);
 const S = {tab:'timeline', data:{}, filters:{kinds:new Set(['encounters','tests','procedures','medications','imaging','immunizations','life_events']), year:'', fac:''}};
 const $ = s => document.querySelector(s);
@@ -646,6 +650,14 @@ function niceTicks(lo, hi, n=5){
   const out = []; for(let v = Math.ceil(lo/step)*step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
   return out;
 }
+// labelled ticks for a date axis from x0 to x1 (ms): years, months or days, by the span
+function dateTicks(x0, x1){
+  const spanD = (x1-x0)/864e5, xt = [], d0 = new Date(x0), d1 = new Date(x1);
+  if(spanD > 730){ const step = Math.ceil(spanD/365/8); for(let y = d0.getFullYear()+1; y <= d1.getFullYear(); y += step) xt.push([new Date(y,0,1).getTime(), String(y)]); }
+  else if(spanD > 45){ const c = new Date(d0.getFullYear(), d0.getMonth()+1, 1), step = Math.max(1, Math.ceil(spanD/30/7)); while(c.getTime() <= x1){ xt.push([c.getTime(), MON[c.getMonth()] + (c.getMonth()===0 || !xt.length ? ' '+c.getFullYear() : '')]); c.setMonth(c.getMonth()+step); } }
+  else { const step = Math.max(1, Math.ceil(spanD/7)); const c = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()+1); while(c.getTime() <= x1){ xt.push([c.getTime(), c.getDate()+' '+MON[c.getMonth()]]); c.setDate(c.getDate()+step); } }
+  return xt;
+}
 function labChart(name, pts, days, rr){
   const W = 720, H = 280, L = 52, R = 16, T = 14, B = 34;
   const xs = pts.map(p => tOf(p.date)); let x0 = Math.min(...xs), x1 = Math.max(...xs);
@@ -655,10 +667,7 @@ function labChart(name, pts, days, rr){
   const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
   const X = v => L + (v-x0)/(x1-x0)*(W-L-R), Y = v => T + (hi-v)/(hi-lo)*(H-T-B);
   const yt = niceTicks(lo, hi);
-  const spanD = (x1-x0)/864e5, xt = [], d0 = new Date(x0), d1 = new Date(x1);
-  if(spanD > 730){ const step = Math.ceil(spanD/365/8); for(let y = d0.getFullYear()+1; y <= d1.getFullYear(); y += step) xt.push([new Date(y,0,1).getTime(), String(y)]); }
-  else if(spanD > 45){ const c = new Date(d0.getFullYear(), d0.getMonth()+1, 1), step = Math.max(1, Math.ceil(spanD/30/7)); while(c.getTime() <= x1){ xt.push([c.getTime(), MON[c.getMonth()] + (c.getMonth()===0 || !xt.length ? ' '+c.getFullYear() : '')]); c.setMonth(c.getMonth()+step); } }
-  else { const step = Math.max(1, Math.ceil(spanD/7)); const c = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()+1); while(c.getTime() <= x1){ xt.push([c.getTime(), c.getDate()+' '+MON[c.getMonth()]]); c.setDate(c.getDate()+step); } }
+  const xt = dateTicks(x0, x1);
   const grid = yt.map(v => `<line x1="${L}" x2="${W-R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line2)"/><text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" class="ax">${v}</text>`).join('');
   const xl = xt.map(([v, l]) => `<line x1="${X(v).toFixed(1)}" x2="${X(v).toFixed(1)}" y1="${H-B}" y2="${H-B+4}" stroke="var(--ink3)"/><text x="${X(v).toFixed(1)}" y="${H-B+18}" text-anchor="middle" class="ax">${esc(l)}</text>`).join('');
   const band = rr ? `<rect x="${L}" y="${Y(rr[1]).toFixed(1)}" width="${W-L-R}" height="${Math.max(1, Y(rr[0])-Y(rr[1])).toFixed(1)}" fill="var(--ok-soft)"/><text x="${W-R-4}" y="${(Y(rr[1])+12).toFixed(1)}" text-anchor="end" class="ax">normal ${rr[0]}–${rr[1]}</text>` : '';
@@ -700,6 +709,149 @@ function openLab(name, tests){
   };
   document.querySelectorAll('#eps [data-ep]').forEach(b => b.onclick = () => draw(b.dataset.ep));
   draw(first);
+}
+
+// ---------- home readings (readings.py) ----------
+// the same types, units and chart ranges as readings.TYPES; flags come from the server
+const READING_TYPES = {
+  blood_pressure:{label:'Blood pressure', unit:'mmHg', two:true, band:[90,120], band2:[60,80]},
+  pulse:{label:'Pulse', unit:'bpm', band:[60,100]}, weight:{label:'Weight', unit:'lb'},
+  glucose:{label:'Blood sugar', unit:'mg/dL', band:[70,180]}, temperature:{label:'Temperature', unit:'°F', band:[97,99.5]},
+  oxygen:{label:'Oxygen (SpO2)', unit:'%', band:[95,100]}, peak_flow:{label:'Peak flow', unit:'L/min'}, pain:{label:'Pain (0-10)', unit:'/10'},
+};
+const rnum = (v, dg=1) => v == null ? '' : String(+(+v).toFixed(dg));
+const readingLabel = t => (READING_TYPES[t]||{}).label || t;
+const readingUnit = r => r.unit || (READING_TYPES[r.type]||{}).unit || '';
+const readingValue = r => rnum(r.reading) + (r.reading2 != null ? '/' + rnum(r.reading2) : '');
+function readingName(r){ return `${readingLabel(r.type)} ${readingValue(r)} ${readingUnit(r)}`.trim(); }
+const readingTime = r => new Date(`${r.date}T${r.time||'12:00'}`).getTime();
+const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+const READ_SPANS = [[30,'30 days'],[90,'90 days'],[365,'1 year'],[0,'All']];
+function readingChart(rows, type){
+  const t = READING_TYPES[type] || {}, W = 720, H = 240, L = 46, R = 14, T = 12, B = 32;
+  const xs = rows.map(readingTime); let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  if(x1 - x0 < 4*864e5){ x0 -= 2*864e5; x1 += 2*864e5; }
+  const vals = rows.flatMap(r => [r.reading, r.reading2]).filter(v => v != null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const usual = !rows.some(r => r.unit && r.unit !== t.unit);   // ranges only for the usual unit
+  for(const b of [t.band, t.band2]) if(b && usual){ lo = Math.min(lo, b[0]); hi = Math.max(hi, b[1]); }
+  const pad = (hi - lo || Math.abs(hi) || 1) * 0.12; lo -= pad; hi += pad;
+  const X = v => L + (v-x0)/(x1-x0)*(W-L-R), Y = v => T + (hi-v)/(hi-lo)*(H-T-B);
+  const band = b => b && usual ? `<rect x="${L}" y="${Y(b[1]).toFixed(1)}" width="${W-L-R}" height="${Math.max(1, Y(b[0])-Y(b[1])).toFixed(1)}" fill="var(--ok-soft)"/>` : '';
+  const grid = niceTicks(lo, hi).map(v => `<line x1="${L}" x2="${W-R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--line2)"/><text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" class="ax">${v}</text>`).join('');
+  const xl = dateTicks(x0, x1).map(([v, l]) => `<text x="${X(v).toFixed(1)}" y="${H-B+18}" text-anchor="middle" class="ax">${esc(l)}</text>`).join('');
+  const line = (key, color) => { const pts = rows.map((r, i) => r[key] == null ? null : `${X(xs[i]).toFixed(1)},${Y(r[key]).toFixed(1)}`).filter(Boolean);
+    return pts.length > 1 ? `<path d="M${pts.join('L')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>` : ''; };
+  // red: the number that is out of range (for blood pressure, the top or the bottom one, as readings.flag)
+  const out = (r, key) => !r.flag ? false : type !== 'blood_pressure' ? key === 'reading' :
+    key === 'reading' ? r.reading >= 140 || r.reading < 90 : r.reading2 >= 90 || r.reading2 < 60;
+  const dots = (key, color) => rows.map((r, i) => r[key] == null ? '' : `<g class="pt" data-i="${i}"><circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(r[key]).toFixed(1)}" r="10" fill="transparent"/><circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(r[key]).toFixed(1)}" r="3.6" fill="${out(r, key)?'var(--bad)':color}"/></g>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(readingLabel(type))} over time">${band(t.band)}${band(t.band2)}${grid}<line x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}" stroke="var(--ink3)"/>${xl}${line('reading','var(--accent)')}${line('reading2','var(--warn)')}${dots('reading','var(--accent)')}${dots('reading2','var(--warn)')}</svg>`;
+}
+function drawReadingChart(type, rows){
+  const box = document.querySelector(`[data-rchart="${CSS.escape(type)}"]`); if(!box) return;
+  const span = S.readSpan[type] ?? 90, cut = span ? Date.now() - span*864e5 : -Infinity;
+  const sub = rows.filter(r => readingTime(r) >= cut).sort((a,b) => readingTime(a) - readingTime(b));
+  box.innerHTML = sub.length ? readingChart(sub, type) + '<div class="tip" hidden></div>' : '<p class="muted small">No readings in this time.</p>';
+  const tip = box.querySelector('.tip');
+  box.querySelectorAll('.pt').forEach(g => {
+    g.onmouseenter = () => { const r = sub[+g.dataset.i], c = g.querySelector('circle').getBoundingClientRect(), bb = box.getBoundingClientRect();
+      tip.innerHTML = `<b>${esc(readingValue(r))}</b> ${esc(readingUnit(r))}${r.flag?` · ${r.flag==='H'?'high':'low'}`:''}<br><span class="muted">${fdate(r.date)} ${esc(r.time||'')}${r.notes?' · '+esc(r.notes):''}</span>`;
+      tip.hidden = false; tip.style.left = Math.min(bb.width-180, Math.max(0, c.left-bb.left-80)) + 'px'; tip.style.top = Math.max(0, c.top-bb.top-52) + 'px'; };
+    g.onmouseleave = () => { tip.hidden = true; };
+  });
+  document.querySelectorAll(`[data-rspan^="${CSS.escape(type)}|"]`).forEach(b => b.classList.toggle('primary', b.dataset.rspan === `${type}|${span}`));
+}
+const readingsUrl = (days, pdf) => '/report?' + new URLSearchParams({view:'readings', p:PERSON, ...(days?{days}:{}), ...(pdf?{format:'pdf', download:'1'}:{})});
+VIEWS.readings = async () => {
+  const all = await load('readings','/api/readings');
+  S.readSpan = S.readSpan || {};
+  const type = S.readType || 'blood_pressure', t = READING_TYPES[type];
+  const kinds = [...Object.keys(READING_TYPES), ...[...new Set(all.map(r => r.type))].filter(k => !READING_TYPES[k]).sort()].filter(k => all.some(r => r.type === k));
+  let html = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><h2>Home readings</h2>
+    <span><button class="btn" id="rpaste">Paste readings…</button> <select id="rdays" class="btn">${READ_SPANS.map(([d,l]) => `<option value="${d}" ${d===(S.readPrint??30)?'selected':''}>${d?'Last '+l:'All readings'}</option>`).join('')}</select>
+    <button class="btn" id="rprint">🖨 Print</button> <button class="btn" id="rpdf">PDF</button></span></div>
+    <p class="fin-note">Blood pressure, pulse, weight, blood sugar and more, measured at home. The printout gives a doctor the averages and every reading. Shaded bands and red points are common general ranges, not a personal target.</p>
+    <form class="radd" id="radd"><select name="type">${Object.entries(READING_TYPES).map(([k,x]) => `<option value="${k}" ${k===type?'selected':''}>${esc(x.label)}</option>`).join('')}<option value="__other" ${t?'':'selected'}>Something else…</option></select>
+      <input name="other" placeholder="What was measured" ${t?'hidden':''} value="${t?'':esc(type)}" maxlength="60">
+      <input name="date" class="d" value="${today()}" placeholder="YYYY-MM-DD"><input name="time" class="t" value="${nowHM()}" placeholder="HH:MM">
+      <input name="reading" class="n" inputmode="decimal" placeholder="${t&&t.two?'top':'reading'}" title="for blood pressure, the top number (systolic)" autocomplete="off">
+      <span id="rtwo" ${t&&t.two?'':'hidden'}>/ <input name="reading2" class="n" inputmode="decimal" placeholder="bottom" title="the bottom number (diastolic)" autocomplete="off"> <input name="pulse" class="n" inputmode="decimal" placeholder="pulse" autocomplete="off" title="optional; saved as its own pulse reading"></span>
+      <input name="unit" class="u" value="${esc(t?t.unit:'')}" placeholder="unit"><input name="notes" placeholder="Notes (optional)" maxlength="300">
+      <button class="btn primary">Add</button></form><div class="muted small" id="rmsg"></div></div>`;
+  if(!kinds.length) html += '<div class="panel"><div class="empty">No readings yet. Add one above, or paste a list from a notebook or a meter\'s export.</div></div>';
+  for(const k of kinds){
+    const rs = all.filter(r => r.type === k), last = rs[0], m30 = rs.filter(r => readingTime(r) >= Date.now() - 30*864e5);
+    const avg = key => { const v = m30.map(r => r[key]).filter(x => x != null); return v.length ? v.reduce((a,b) => a+b, 0)/v.length : null; };
+    const whole = ['blood_pressure','pulse','glucose','oxygen'].includes(k) ? 0 : 1;
+    if(!(k in S.readSpan)) S.readSpan[k] = rs.filter(r => readingTime(r) >= Date.now() - 90*864e5).length >= 3 ? 90 : 0;
+    const row = r => `<tr class="click" data-open="readings|${esc(r.id)}"><td class="nowrap">${fdate(r.date)}</td><td class="nowrap muted">${esc(r.time||'')}</td><td class="nowrap"><b>${esc(readingValue(r))}</b> <span class="muted small">${esc(readingUnit(r))}</span>${r.flag?`<span class="tag bad">${r.flag==='H'?'high':'low'}</span>`:''}</td><td class="small">${esc(r.notes||'')}</td></tr>`;
+    const table = rows => `<div class="tablewrap"><table><thead><tr><th>Date</th><th>Time</th><th>Reading</th><th>Notes</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
+    html += `<div class="panel"><h2>${esc(readingLabel(k))} <span class="muted small">(${rs.length})</span></h2>
+      <div><span class="rlatest">${esc(readingValue(last))}</span> <span class="muted">${esc(readingUnit(last))}</span>${last.flag?`<span class="tag bad">${last.flag==='H'?'high':'low'}</span>`:''} <span class="muted small">latest, ${fdate(last.date)} ${esc(last.time||'')}</span></div>
+      <div class="rstats">${m30.length ? `Last 30 days: average ${rnum(avg('reading'), whole)}${avg('reading2') != null ? '/' + rnum(avg('reading2'), whole) : ''} over ${m30.length} reading${m30.length===1?'':'s'}${m30.some(r => r.flag) ? `, ${m30.filter(r => r.flag).length} outside the usual range` : ''}.` : 'No readings in the last 30 days.'}</div>
+      <div class="filters">${READ_SPANS.map(([d,l]) => `<button class="btn" data-rspan="${esc(k)}|${d}">${l}</button>`).join('')}</div>
+      <div class="labchart" data-rchart="${esc(k)}"></div>
+      ${table(rs.slice(0, 6))}${rs.length > 6 ? `<details><summary class="small">All ${rs.length} readings</summary>${table(rs.slice(6))}</details>` : ''}</div>`;
+  }
+  setTimeout(() => bindReadings(all, kinds));
+  return html;
+};
+function bindReadings(all, kinds){
+  const f = $('#radd'); if(!f) return;
+  for(const k of kinds){
+    drawReadingChart(k, all.filter(r => r.type === k));
+    document.querySelectorAll(`[data-rspan^="${CSS.escape(k)}|"]`).forEach(b => b.onclick = () => { S.readSpan[k] = +b.dataset.rspan.split('|').pop(); drawReadingChart(k, all.filter(r => r.type === k)); });
+  }
+  f.type.onchange = () => {
+    const t = READING_TYPES[f.type.value];
+    f.other.hidden = !!t; $('#rtwo').hidden = !(t && t.two); f.unit.value = t ? t.unit : '';
+    f.reading.placeholder = t && t.two ? 'top' : 'reading';
+    if(!t) f.other.focus(); else f.reading.focus();
+  };
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    const d = Object.fromEntries(new FormData(f).entries()), type = d.type === '__other' ? (d.other||'').trim() : d.type;
+    const num = v => (v||'').trim() === '' ? null : +(v.trim().replace(',', '.'));
+    const body = {type, date:d.date.trim(), time:d.time.trim(), reading:num(d.reading), reading2:READING_TYPES[type]&&READING_TYPES[type].two ? num(d.reading2) : null, unit:d.unit.trim(), notes:d.notes.trim()};
+    if(!type){ $('#rmsg').textContent = 'Say what was measured.'; return; }
+    if(body.reading == null || isNaN(body.reading) || (body.reading2 != null && isNaN(body.reading2))){ $('#rmsg').textContent = 'Type the reading as a number.'; return; }
+    if(READING_TYPES[type] && READING_TYPES[type].two && body.reading2 == null){ $('#rmsg').textContent = 'Blood pressure needs both numbers, like 128 and 82.'; return; }
+    try{
+      await api('/api/readings', {method:'POST', body:JSON.stringify(body)});
+      const p = num(d.pulse);
+      if(type === 'blood_pressure' && p != null && !isNaN(p)) await api('/api/readings', {method:'POST', body:JSON.stringify({type:'pulse', date:body.date, time:body.time, reading:p, unit:'bpm', notes:body.notes})});
+    }catch(e){ $('#rmsg').textContent = e.message; return; }
+    S.readType = type; invalidate(); await render(); const n = $('#radd [name=reading]'); if(n) n.focus();
+  };
+  $('#rpaste').onclick = () => pasteReadings();
+  const days = () => { S.readPrint = +$('#rdays').value; return S.readPrint; };
+  $('#rprint').onclick = () => window.open(readingsUrl(days()), '_blank');
+  $('#rpdf').onclick = () => downloadUrl(readingsUrl(days(), true));
+}
+function pasteReadings(text='', type=S.readType && READING_TYPES[S.readType] ? S.readType : 'blood_pressure'){
+  show('<h2>Paste readings</h2>', `<p class="small muted" style="margin-top:0">One reading per line, from a notebook or a meter's or app's export (CSV works): the date, maybe the time, then the reading. For example <code>11/20/2026 8:15 AM 128/82 72</code>: for blood pressure a third number is the pulse. Lines without a date, like headings, are skipped, and readings already here aren't added twice. You'll see what was read before anything is saved.</p>
+    <form class="edit" id="rpf"><label>What was measured<select name="type">${Object.entries(READING_TYPES).map(([k,x]) => `<option value="${k}" ${k===type?'selected':''}>${esc(x.label)}</option>`).join('')}</select></label>
+    <label>Unit<input name="unit" value="${esc(READING_TYPES[type].unit)}"></label>
+    <label class="wide">Readings<textarea name="text" rows="12" placeholder="2026-11-20 08:15 128/82 72">${esc(text)}</textarea></label></form>
+    <div class="row-actions"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="check">Check</button></div><div id="rpout"></div>`);
+  const f = $('#rpf');
+  f.type.onchange = () => { f.unit.value = READING_TYPES[f.type.value].unit; };
+  $('#cancel').onclick = () => dlg.close();
+  const send = apply => api('/api/readings/paste', {method:'POST', body:JSON.stringify({type:f.type.value, unit:f.unit.value, text:f.text.value, apply})});
+  $('#check').onclick = async () => {
+    let p; try{ p = await send(false); }catch(e){ $('#rpout').innerHTML = `<p class="muted small">${esc(e.message)}</p>`; return; }
+    const errs = p.errors.length ? `<h3>Not read (${p.errors.length})</h3><ul class="small">${p.errors.slice(0, 30).map(e => `<li>Line ${e.line}: <code>${esc(e.text)}</code>: ${esc(e.why)}</li>`).join('')}</ul>` : '';
+    const sample = p.rows.slice(0, 8).map(r => `<li>${fdate(r.date)} ${esc(r.time||'')}: <b>${esc(readingName(r))}</b></li>`).join('');
+    $('#rpout').innerHTML = `<h3>Read ${p.rows.length} reading${p.rows.length===1?'':'s'}</h3>${sample ? `<ul class="small">${sample}${p.rows.length > 8 ? '<li>…</li>' : ''}</ul>` : ''}
+      <p class="small">${p.new} new${p.rows.length - p.new ? `, ${p.rows.length - p.new} already here` : ''}.</p>${errs}
+      ${p.new ? `<div class="row-actions"><button class="btn primary" id="rpsave">Save ${p.new} reading${p.new===1?'':'s'}</button></div>` : ''}`;
+    if(p.new) $('#rpsave').onclick = async () => {
+      $('#rpsave').disabled = true;
+      try{ await send(true); }catch(e){ $('#rpout').insertAdjacentHTML('beforeend', `<p class="muted small">${esc(e.message)}</p>`); return; }
+      S.readType = f.type.value; dlg.close(); invalidate(); render();
+    };
+  };
 }
 
 VIEWS.documents = async () => {
@@ -832,7 +984,7 @@ async function openRecord(kind, id){
   }).join('');
   const links = (r.docs||[]).map(d => byId[d] ? `<div class="hit" data-doc="${d}" data-date="${esc(r.date||r.start_date||r.first_noted||'')}" data-end="${esc(r.end_date||'')}">📄 <b>${esc(byId[d].title)}</b> <span class="muted small">${fdate(byId[d].doc_date)}</span></div>` : '').join('');
   show(`<h2>${esc(recName(r)||KIND_LABEL[kind])}</h2><div class="muted small">${KIND_LABEL[kind]}${r.edited?' · edited by hand':''}${r.needs_review?' · <span class="tag warn">needs review</span>':''}</div>`,
-    `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:kind==='questions'?'':'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
+    `${r.needs_review?`<div class="ask-box"><b>Please check: ${esc(reviewAsk(kind, r))}</b>${reviewNote(r)?`<div class="small" style="margin-top:4px">${esc(reviewNote(r))}</div>`:''}<div class="small muted" style="margin-top:6px">Compare with the source document below. If it's right, click <b>Looks right</b>; if not, <b>Edit</b> it.</div></div>`:''}<div class="kv">${kv}</div>${links?'<h3>Source documents</h3>'+links:['questions','readings'].includes(kind)?'':'<p class="muted small">No source document linked.</p>'}<div class="row-actions"><button class="btn" id="ed">Edit</button>${r.needs_review?'<button class="btn primary" id="rok">Looks right</button>':''}</div>`);
   $('#ed').onclick = () => editRecord(kind, r);
   if(kind === 'encounters'){   // questions noted as answered at this visit
     const qs = (await load('questions','/api/questions')).filter(q => q.encounter_id === r.id);
@@ -883,6 +1035,8 @@ function editRecord(kind, r){
   const inputs = FIELDS[kind].map(f => {
     const v = r[f] ?? '';
     const type = (f.includes('date')||f==='first_noted') ? 'text" placeholder="YYYY-MM-DD' : ['charged','num'].includes(f) ? 'number" step="any' : 'text';
+    if(kind==='readings' && f==='type') return `<label>What was measured<select name="type">${Object.entries(READING_TYPES).map(([k,t]) => `<option value="${k}" ${k===v?'selected':''}>${esc(t.label)}</option>`).join('')}${v && !READING_TYPES[v] ? `<option selected value="${esc(v)}">${esc(v)}</option>` : ''}</select></label>`;
+    if(kind==='readings' && f==='time') return `<label>Time<input name="time" value="${esc(v)}" placeholder="HH:MM (24-hour)"></label>`;
     if(kind==='questions'){
       if(f==='important') return `<label>Important<select name="important"><option value="0">No</option><option value="1" ${v?'selected':''}>Yes, ask it first</option></select></label>`;
       if(f==='status') return `<label>Status<select name="status">${['open','answered'].map(o=>`<option ${o===(v||'open')?'selected':''}>${o}</option>`).join('')}</select></label>`;

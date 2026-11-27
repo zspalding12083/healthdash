@@ -54,6 +54,13 @@ Mac on the home network.
   list** to take along, grouped by doctor with room to write the answers (or one doctor's questions
   on their own, or a PDF). Afterwards, **Answered…** notes what was said and at which visit; the
   visit then shows the questions answered there, and search finds them.
+- **Home readings**: the **Home readings** tab. Log blood pressure (with pulse), weight, blood sugar,
+  temperature, oxygen, peak flow, pain or anything else, with the time and a note. Or paste a list
+  from a notebook or a meter's or app's CSV export, check what was read, and save it; readings already
+  there aren't added twice. Each kind gets its latest value, a 30-day average and a chart (30 days to
+  all years). **Print** gives a doctor the averages (mornings against evenings for blood pressure)
+  and every reading, as a page or a PDF. Readings outside common general ranges show in red; these
+  aren't anyone's personal targets.
 - **Medications**: current list plus a history chart of when each one started and stopped (one row
   per period of use). Paste the current list from a doctor or pharmacy and the dashboard shows what
   it would change (started, stopped, a dose that differs, one drug under two names) before saving
@@ -286,6 +293,7 @@ healthdash/
   report.py     the printouts: health summary, medicines and allergies (HTML or PDF)
   emergency.py  the emergency card and its details (contacts, blood type, devices, ...)
   questions.py  questions for the next visit: grouping and the list to take along
+  readings.py   home readings: types and ranges, pasted lists, the log for a doctor
   pdf.py        a small PDF writer for them (standard library only)
   classify.py   what an uploaded document is (kind, date, facility, title, amount) + questions
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes

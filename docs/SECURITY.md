@@ -65,6 +65,14 @@ question can't be empty, and anyone who can use the dashboard can read and chang
 record. They are shown escaped on the page and drawn by the same escaped, nonce-only printout code
 as the other printouts; the `ask=` filter is cut to 100 characters and only compared, never run.
 
+## Home readings (2026-11-27)
+
+Readings are ordinary entries: numbers are parsed as floats, dates and times are checked, and the
+type, reading and date are required. Pasted lists are read by fixed patterns (no `eval`, no CSV
+module quirks), capped at 500,000 characters per paste, and refused lines are echoed back cut to 200
+characters, escaped on the page. `days=` must be a whole number of days up to 100 years and `types=`
+is only compared. The printout uses the same escaped, nonce-only code as the others.
+
 ## Browser plugin removed (2026-11-27)
 
 The Firefox plugin and its keys are gone: there is no `Authorization: Bearer` access any more, no
@@ -73,7 +81,7 @@ when the dashboard starts (the `api_keys` table is dropped). Findings above that
 describe the code as it was then.
 
 Tests for each are in `tests/test_auth.py`, `tests/test_features.py`, `tests/test_storage.py` and
-`tests/test_emergency.py` and `tests/test_questions.py`.
+`tests/test_emergency.py`, `tests/test_questions.py` and `tests/test_readings.py`.
 
 ## Checked and found sound
 

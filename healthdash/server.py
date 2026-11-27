@@ -333,6 +333,13 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                         return self._send(200, answer(self.ctx.store, str(b.get('key') or ''), str(b.get('action') or '')))
                     except ValueError as e:
                         return self._err(400, str(e))
+                if p == ['readings', 'paste']:
+                    from .readings import add_pasted
+                    b = self._json() or {}
+                    if len(str(b.get('text') or '')) > 500_000:
+                        return self._err(400, 'paste fewer lines at a time')
+                    return self._send(200, add_pasted(self.ctx.store, str(b.get('text') or ''), str(b.get('type') or ''),
+                                                      str(b.get('unit') or ''), bool(b.get('apply'))))
                 if p == ['medications', 'current-list']:
                     b = self._json() or {}
                     return self._send(200, self.ctx.store.apply_med_list(b.get('text'), b.get('as_of'), bool(b.get('apply'))))
@@ -541,7 +548,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             sections and kinds (comma lists), order=oldest; or view=meds (with otc=0 to leave out
             over-the-counter medicines) for the quick medicines-and-allergies list; view=card for
             the emergency card (emergency.py); or view=questions (with ask=WHO for one doctor's) for
-            the questions to take to a visit (questions.py). format=pdf gives a
+            the questions to take to a visit (questions.py); or view=readings (days=N, types=a,b) for
+            the home readings log (readings.py). format=pdf gives a
             PDF (pdf.py) instead of the page; download=1 saves either as a file."""
             from urllib.parse import urlencode
             from .report import HISTORY_KINDS, SECTIONS, med_list, summary, to_html
@@ -556,6 +564,13 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if view == 'card':
                 from .emergency import card
                 doc = card(self.ctx.store, self.ctx.name)
+            elif view == 'readings':
+                from .readings import sheet as readings_sheet
+                days = qs.get('days') or ''
+                if days and not (days.isdigit() and 0 < int(days) <= 36600):
+                    raise ValidationError('days must be a number of days')
+                doc = readings_sheet(self.ctx.store, self.ctx.name, int(days) if days else None,
+                                     [t for t in (qs.get('types') or '').split(',') if t][:50] or None)
             elif view == 'questions':
                 from .questions import sheet
                 doc = sheet(self.ctx.store, self.ctx.name, (qs.get('ask') or '').strip()[:100] or None)
@@ -565,7 +580,7 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 doc = summary(self.ctx.store, self.ctx.name, start or None, end or None, pick('sections', SECTIONS),
                               qs.get('order') == 'oldest', pick('kinds', HISTORY_KINDS))
             pdf = qs.get('format') == 'pdf'
-            what = {'card': 'emergency-card', 'meds': 'medicines-and-allergies', 'questions': 'questions'}.get(view, 'health-summary')
+            what = {'card': 'emergency-card', 'meds': 'medicines-and-allergies', 'questions': 'questions', 'readings': 'home-readings'}.get(view, 'health-summary')
             fn = re.sub(r'[^A-Za-z0-9-]+', '-', f'{what}-{self.ctx.name}').strip('-') + f'-{date.today().isoformat()}'
             disp = 'attachment' if qs.get('download') == '1' else 'inline'
             if pdf:
