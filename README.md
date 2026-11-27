@@ -195,8 +195,15 @@ Edits made on the dashboard are kept: re-importing never overwrites a record som
 
 ## More people
 
-Each person gets their own dashboard: own records, accounts, port and backups, all on the same
-server and sharing the same program code.
+**From the web page (the easy way):** pick **＋ Add family member…** in the people menu at the top
+(next to the title), type their name, and the dashboard switches to their records. Each person's
+records and files are kept apart; switch between people with the same menu. Rename people under
+**👤 Accounts → People**. Everyone who can use the dashboard sees every person on it, and
+backups (`deploy/sync.sh backup`) include them all.
+
+**A separate dashboard** (own address, own accounts) is for someone whose records others in the
+house shouldn't see. Each gets its own port and backups, all on the same server and sharing the
+same program code.
 
 ```bash
 deploy/add-person.sh alex 9381 "Alex's Health"   # asks for the server's sudo password once
@@ -207,6 +214,38 @@ It creates the service `healthdash-alex` with its data in `/var/lib/healthdash-a
 `deploy/sync.sh backup` copies it into `backups/alex/`. Open `http://<server>:9381` and create its first
 account right away. In the Firefox plugin, add it as another dashboard; the popup's **Save to** picks
 whose dashboard gets what you save (useful with MyChart's family access).
+
+## Where records are kept
+
+The dashboard keeps its own copy of every original file (PDFs, scans, health summaries) in its data
+folder. To keep them somewhere else, such as a bigger disk, a USB drive or a shared folder, open
+**👤 Accounts → Where records are kept**, type a folder on the server, and press **Move records here**.
+Everyone's files move there (checked as they're copied to another disk), and a readable copy is kept
+beside them, sorted by person and kind of record:
+
+```
+Records/
+  Sam/04 Labs/2024-03-05_Riverside-Clinic_Lipid-panel.pdf
+  Alex/02 Office visits and consults/2023-11-02_Lakeside-Family-Medicine_Office-visit.pdf
+  .healthdash-store/      the dashboard's own copy (leave this alone)
+```
+
+The readable copy follows renames, new files and deletions within a few seconds. Its files are
+linked to the originals, so they take no extra space (on drives that can't link files, such as some
+USB and network drives, they are copies). They are read-only: copy one out to mark it up. Anything
+you put in the folder yourself is left alone. **Back to the data folder** moves everything back.
+
+On a Linux server the service may only write to its own data folder. Allow the new one first:
+
+```bash
+sudo systemctl edit healthdash     # add the two lines:  [Service]  and  ReadWritePaths=/mnt/records
+sudo chown healthdash /mnt/records
+sudo systemctl restart healthdash
+```
+
+If the folder's drive isn't connected, the dashboard says so and files can't be opened or added
+until it is. The database itself stays in the data folder; `deploy/sync.sh backup` still copies
+everything.
 
 ## Getting everything out of a patient portal
 
@@ -264,6 +303,7 @@ healthdash/
   uploads.py    files added on the dashboard: save, read in the background, file or ask; one-time passes
   checks.py     record checks: questions on the Review tab about likely mistakes and duplicates
   people.py     several people on one dashboard
+  storage.py    where the original files are kept, and the readable sorted copy
   doctor.py     `check`: what's installed and how to install what isn't
   auth.py       optional sign-in: accounts, password hashing, sessions, plugin keys
   macos.py      `service`: launchd setup on a Mac

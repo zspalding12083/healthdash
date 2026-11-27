@@ -43,6 +43,7 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 | `extract.py` | Text of PDFs (with OCR for scanned pages), office files, web pages, and DICOMDIR headers of imaging discs; cached by sha256. |
 | `catalog.py`, `organize.py`, `ingest.py` | The records folder: per-file details, a sorted copy, and sending everything to the dashboard. |
 | `people.py` | Several people on one dashboard, each with their own database and files. |
+| `storage.py` | Where the original files are kept: the folder chosen under Accounts (moving files there), and the readable, sorted copy kept beside them. |
 | `auth.py` | Optional sign-in: whether it is on, accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie) and plugin keys. |
 | `config.py` | Settings from `data/local.json`. |
 | `doctor.py`, `macos.py`, `wipe.py`, `demo.py` | `check`, the macOS service, starting over, and the sample data. |
@@ -51,6 +52,15 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 ## Data model
 
 One SQLite database per person (`health.db` for the first, `people/<id>/health.db` for others).
+
+Stored files are named `<sha256>.<ext>`, in the `--files` folder (and `people/<id>/files`), or,
+once a folder is chosen under Accounts (setting `files_folder`), in `<folder>/.healthdash-store/<id>/`.
+Then `<folder>/<Person>/<category folder>/<date>_<place>_<title>.<ext>` is a readable copy: hard
+links (copies where the disk can't link), kept current by a background thread a couple of seconds
+after any change, listed in `.healthdash-store/readable.json` so that only those files are ever
+removed. Stored files are made read-only, so a program saving over a readable file can't change
+the original; code that redraws a stored page writes a new file and swaps it in (`write_page`).
+The database stays in the data folder.
 
 - **documents**: one row per file (id = sha256), with title, date, kind, place, page count, which
   pages were read by OCR, the full text (in an FTS5 index), `needs_review` and `person_edited`.
@@ -176,6 +186,7 @@ All under `/api/`, JSON, for the signed-in user (anyone, when sign-in is off) un
 | `POST checks` `{key, action}` | answer a record check |
 | `POST medications/current-list` | set a pasted medication list against the records |
 | `GET/POST people`, `PUT people/<id>` | the people on the dashboard |
+| `GET storage`, `POST storage` `{folder}` | where the files are kept; POST starts moving them (`''` = back to the data folder), GET shows progress |
 | `POST import`, `POST files/<sha>`, `GET backup`, `GET uploads`, `GET files/missing` | ingest host only |
 | `GET auth`, `POST setup`, `login`, `logout`; `keys`, `users` | sign-in and accounts |
 | `POST login-required` `{on, username, password}` / `{on: false}` | turn sign-in on (signs in with that account, or makes it) or off (only when signed in) |
@@ -209,7 +220,10 @@ so a saved copy keeps the rule).
   by other sites and send no referrer. Repeated wrong passwords are slowed down; request logging is off.
 - Uploads are checked by their first bytes, stored under their sha256 and read by `pdftotext` and
   `tesseract` (never through a shell, five minutes at most per page or file). Health summaries with
-  a DOCTYPE or entities are refused. Saved web pages are shown in a sandbox with no scripts.
+  a DOCTYPE or entities anywhere in them are refused, as are export zips that unpack past 2 GB.
+  Every stored file but a PDF is sent with a sandbox policy (no scripts, nothing loaded), so a
+  saved web page or an `.xml` file can't run as the dashboard; files are sent in pieces, not read
+  into memory whole.
 - See `docs/SECURITY.md` for the latest review: what was checked, fixed and left as known limits.
 - On Linux the service runs as its own user with `ProtectSystem=strict`, `ProtectHome` and `UMask=0077`.
 - The public copy of the code is made by `tools/export_public.sh`, which copies an allowlist and
@@ -222,7 +236,10 @@ so a saved copy keeps the rule).
 - **Update**: `deploy/sync.sh push` runs the tests, copies the code, restarts every dashboard on the
   server and checks they're up.
 - **Back up**: `deploy/sync.sh backup` keeps a copy of each database and the uploaded files.
-- **More people**: the People menu on the dashboard, or `deploy/add-person.sh` for a separate dashboard.
+- **More people**: ＋ Add family member in the people menu, or `deploy/add-person.sh` for a separate dashboard.
+- **Keep the files somewhere else**: Accounts → Where records are kept. On Linux the service may
+  only write to its data folder, so first allow the new one (`ReadWritePaths=` with
+  `systemctl edit healthdash`, and `chown healthdash`); the dashboard says so if it can't write.
 - **Check a machine**: `python3 -m healthdash check`.
 
 ## Changing it
@@ -235,6 +252,9 @@ so a saved copy keeps the rule).
 - **A brand name**: `ccda.DRUG_NAMES` (bump `MEDS_VERSION`).
 - **A new record check**: a function in `checks.py` returning questions with `key`, `kind`, `title`,
   `ask`, `note`, `sides` and `answers`, added to `issues()`; handle its answers in `answer()`.
+  The duplicate checks compare every pair of names, so keep per-pair work cheap: `_words()` is
+  cached and `_close()` rules out pairs by length before running difflib. `issues()` caches its
+  answer until the records change; the home page asks for it on every load.
 - **A new kind of record**: add it to `KINDS` (the table is created on startup), to `FIELDS` and
   `KIND_LABEL` in `index.html`, and to the importer that fills it.
 - **A new field on an existing kind**: add it to `KINDS` and to `ADDED` in `store.py` (so existing

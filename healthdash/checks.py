@@ -11,6 +11,7 @@ Nothing here changes a record by itself: each check is a question with answers. 
 """
 
 import difflib
+import functools
 import hashlib
 import json
 import math
@@ -91,11 +92,26 @@ def learned_condition_names(store):
     return _setting(store, CONDITION_ALIAS, {})
 
 
+@functools.lru_cache(maxsize=20000)
 def _words(name, brackets=False):
+    """The meaningful words of a name, lower case (without bracketed parts unless `brackets`).
+    Cached: the duplicate checks compare every pair of names, so each name is split many times."""
     name = (name or '').lower()
     if not brackets:
         name = re.sub(r'\(.*?\)', ' ', name)
-    return [w for w in WORDS.findall(name) if w not in FILLER]
+    return tuple(w for w in WORDS.findall(name) if w not in FILLER)
+
+
+DIGIT = re.compile(r'\d')
+
+
+def _close(a, b, cut):
+    """difflib's similarity of two strings is at least `cut`. The cheap upper bounds go first, so the
+    full comparison runs only for pairs that could pass (the answer is the same)."""
+    if not a or not b or 2 * min(len(a), len(b)) / (len(a) + len(b)) < cut:   # real_quick_ratio, before building
+        return False
+    m = difflib.SequenceMatcher(None, a, b)
+    return m.quick_ratio() >= cut and m.ratio() >= cut
 
 
 def _alike(a, b, extra=2):
@@ -107,10 +123,10 @@ def _alike(a, b, extra=2):
         return False
     sa, sb = ' '.join(wa), ' '.join(wb)
     full = set(_words(a, True)) ^ set(_words(b, True))   # "(OD)" vs "(OS)" counts
-    if any(re.search(r'\d', w) or w in TELLING for w in full):
+    if any(DIGIT.search(w) or w in TELLING for w in full):
         return False
     if not any(len(w) >= 3 and w not in VAGUE and w not in TELLING for w in set(wa) & set(wb)):
-        if not (len(sa) >= 6 and difflib.SequenceMatcher(None, sa, sb).ratio() >= 0.9):
+        if not (len(sa) >= 6 and _close(sa, sb, 0.9)):
             return False   # nothing meaningful in common ("Source" and "HSV Source")
     if sa == sb:
         return True
@@ -125,8 +141,7 @@ def _alike(a, b, extra=2):
     small, big = (set(wa), set(wb)) if len(set(wa)) <= len(set(wb)) else (set(wb), set(wa))
     if small <= big:
         return (len(big - small) <= extra and any(len(w) >= 4 and w not in VAGUE for w in small))
-    if len(sa) >= 6 and difflib.SequenceMatcher(None, sa, sb).quick_ratio() >= 0.9 \
-            and difflib.SequenceMatcher(None, sa, sb).ratio() >= 0.9:
+    if len(sa) >= 6 and _close(sa, sb, 0.9):
         return all(len(w) >= 5 for w in diff)   # a spelling difference, not a different short word
 
 
@@ -255,7 +270,7 @@ def _dup_meds(store, today):
         for b in meds[i + 1:]:
             ka, kb = key(a['name']), key(b['name'])
             same_drug = ka == kb or (len(ka) >= 5 and len(kb) >= 5 and
-                                     difflib.SequenceMatcher(None, ka, kb).ratio() >= 0.88)
+                                     _close(ka, kb, 0.88))
             if not same_drug:
                 continue
             (sa, ea), (sb, eb) = span(a), span(b)
@@ -309,8 +324,8 @@ _CACHE = {}
 def _stamp(store):
     parts = []
     for t in ('medications', 'conditions', 'labs', 'encounters', 'procedures', 'documents'):
-        parts.append(store.db.execute(f'SELECT COUNT(*), MAX(updated) FROM {t}' if t != 'documents'
-                                      else 'SELECT COUNT(*), MAX(doc_date) FROM documents').fetchone())
+        parts.append(tuple(store.db.execute(f'SELECT COUNT(*), MAX(updated) FROM {t}' if t != 'documents'
+                                            else 'SELECT COUNT(*), MAX(doc_date) FROM documents').fetchone()))
     parts.append(store.get_setting(DISMISSED))
     return json.dumps(parts, default=str)
 

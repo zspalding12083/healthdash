@@ -29,6 +29,7 @@ class People:
         self.home = store
         self.state = state_dir
         self.make_uploads = make_uploads
+        self.storage = None       # storage.Storage, when files may be kept in a chosen folder
         self._lock = threading.Lock()
         store.db.executescript(SCHEMA)
         store.db.commit()
@@ -38,6 +39,7 @@ class People:
                 store.db.execute('INSERT INTO people VALUES (?, ?, ?)', (MAIN, main_name, now()))
                 store.db.commit()
         self.by_id = {MAIN: Person(MAIN, row[0] if row else main_name, store, files_dir, uploads)}
+        self.by_id[MAIN].files_dir_default = files_dir
         for pid, name in store.db.execute('SELECT id, name FROM people WHERE id<>? ORDER BY created', (MAIN,)):
             self.by_id[pid] = self._open(pid, name)
 
@@ -45,10 +47,16 @@ class People:
         if not self.state:
             raise ValidationError('this dashboard was started without a data folder for more people')
         d = os.path.join(self.state, 'people', pid)
-        os.makedirs(os.path.join(d, 'files'), mode=0o700, exist_ok=True)
+        os.makedirs(d, mode=0o700, exist_ok=True)
         st = Store(os.path.join(d, 'health.db'))
-        files = os.path.join(d, 'files')
+        files = self.storage.dir_for(pid) if self.storage else self.default_files(pid)
+        if not self.storage or self.storage.available():
+            os.makedirs(files, mode=0o700, exist_ok=True)
         return Person(pid, name, st, files, self.make_uploads(st, files) if self.make_uploads else None)
+
+    def default_files(self, pid):
+        """A person's files folder when no files folder has been chosen (see storage.py)."""
+        return self.by_id[MAIN].files_dir_default if pid == MAIN else os.path.join(self.state or '', 'people', pid, 'files')
 
     def get(self, pid):
         p = self.by_id.get(pid or MAIN)
@@ -76,6 +84,8 @@ class People:
                 self.home.db.execute('INSERT INTO people VALUES (?, ?, ?)', (pid, name, now()))
                 self.home.db.commit()
             self.by_id[pid] = person
+        if self.storage:
+            self.storage.person_added(person)
         return {'id': pid, 'name': name}
 
     def rename(self, pid, name):
@@ -88,9 +98,13 @@ class People:
             self.home.db.execute('UPDATE people SET name=? WHERE id=?', (name, pid))
             self.home.db.commit()
         p.name = name
+        if self.storage:
+            self.storage.poke()    # their folder in the readable copy follows the name
         return {'id': pid, 'name': name}
 
     def close(self):
+        if self.storage:
+            self.storage.close()
         for p in self.by_id.values():
             if p.store is not self.home:
                 p.store.close()

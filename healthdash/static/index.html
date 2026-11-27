@@ -1160,8 +1160,8 @@ async function openAccounts(){
     : `<h3>Sign-in</h3>${signInOffPanel()}`) + `
     <h3>People</h3><div class="muted small">Each person's records are kept apart. Switch between them with the menu at the top.</div>
     <div class="acct-list" id="peoplelist"></div>
-    <form class="edit" id="pf" onsubmit="return false"><label>Add a person<input name="name" placeholder="Name" autocomplete="off"></label></form>
-    <div class="row-actions" style="justify-content:flex-start"><button class="btn" id="addperson">Add person</button></div>
+    <div class="row-actions" style="justify-content:flex-start"><button class="btn" id="addperson">＋ Add family member</button></div>
+    <div id="storagebox"></div>
     <h3>Browser plugin keys</h3><div class="muted small">A key lets the Firefox plugin add files you view on patient portals. It can only add files, not read or change records. Shown once; paste it into the plugin's settings.</div>
     <div class="acct-list" id="keylist"></div><div class="row-actions" style="justify-content:flex-start"><button class="btn" id="newkey">Create a key</button></div><div id="keyshow"></div>`);
   $('#peoplelist').innerHTML = PEOPLE.map(p => `<div><span><b>${esc(p.name)}</b>${p.id===PERSON?' <span class="tag">showing</span>':''}</span>
@@ -1172,11 +1172,8 @@ async function openAccounts(){
     try{ await api('/api/people/' + encodeURIComponent(p.id), {method:'PUT', body:JSON.stringify({name})}); await loadPeople(); openAccounts(); }
     catch(e){ $('#amsg').textContent = e.message; }
   });
-  $('#addperson').onclick = async () => {
-    const name = new FormData($('#pf')).get('name');
-    try{ const p = await api('/api/people', {method:'POST', body:JSON.stringify({name})}); await loadPeople(); switchPerson(p.id); dlg.close(); }
-    catch(e){ $('#amsg').textContent = e.message; }
-  };
+  $('#addperson').onclick = () => addPerson();
+  storagePanel();
   const keys = await api('/api/keys');
   $('#keylist').innerHTML = keys.length ? keys.map(k => `<div><span><b>${esc(k.label)}</b> <span class="muted small">${esc(k.username)} · made ${esc((k.created||'').slice(0,10))} · last used ${esc((k.last_used||'never').slice(0,10))}</span></span><button class="btn danger" data-revoke="${esc(k.id)}">Revoke</button></div>`).join('') : '<span class="muted small">No keys yet.</span>';
   $('#keylist').querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => { if(!confirm('Revoke this key? The plugin using it stops working.')) return; await api('/api/keys/' + b.dataset.revoke, {method:'DELETE'}); openAccounts(); });
@@ -1222,8 +1219,11 @@ async function loadPeople(){
   try{ PEOPLE = await api('/api/people'); }catch(e){ PEOPLE = []; }
   if(!PEOPLE.some(p => p.id === PERSON)){ PERSON = 'main'; }
   const sel = $('#person');
-  sel.innerHTML = PEOPLE.map(p => `<option value="${esc(p.id)}" ${p.id===PERSON?'selected':''}>${esc(p.name)}</option>`).join('');
-  sel.hidden = PEOPLE.length < 2;
+  // always shown (once there are people to show), so adding a family member is easy to find
+  sel.innerHTML = PEOPLE.map(p => `<option value="${esc(p.id)}" ${p.id===PERSON?'selected':''}>${esc(p.name)}</option>`).join('')
+    + '<option value="__add">＋ Add family member…</option>';
+  sel.hidden = !PEOPLE.length;
+  sel.title = PEOPLE.length > 1 ? 'Whose records' : 'Whose records (add family members here)';
   showTitle();
 }
 // with more than one person the title follows whoever is shown
@@ -1241,7 +1241,65 @@ function switchPerson(id){
   showTitle();
   invalidate(); render();
 }
-$('#person').onchange = e => switchPerson(e.target.value);
+$('#person').onchange = e => {
+  if(e.target.value === '__add'){ e.target.value = PERSON; return addPerson(); }
+  switchPerson(e.target.value);
+};
+// where the original records are kept (a folder on the server), with a readable sorted copy there
+async function storagePanel(){
+  const box = $('#storagebox'); if(!box) return;
+  let st; try{ st = await api('/api/storage'); }catch(e){ box.innerHTML = ''; return; }
+  const s = st.status || {}, moving = s.state === 'moving';
+  const where = st.folder ? `<b>${esc(st.folder)}</b>` : `the dashboard's own data folder (<code>${esc(st.default)}</code>)`;
+  const state = moving ? `<p class="ask-box">Moving the records… ${s.done||0} of ${s.total||'?'} files. You can keep using the dashboard; new files can be added once this finishes.</p>`
+    : s.state === 'error' ? `<p class="ask-box">${esc(s.error)}</p>`
+    : !st.available ? `<p class="ask-box">The folder isn't there right now. Is its drive connected? Files can't be opened or added until it is.</p>`
+    : s.state === 'done' ? `<p class="muted small">Moved ${s.moved} file${s.moved===1?'':'s'}.</p>` : '';
+  const readable = st.folder && s.readable != null ? `<p class="muted small">${s.readable} file${s.readable===1?' is':'s are'} in the readable copy, sorted into a folder per person and per kind of record
+    ${s.mode === 'copy' ? ' (copies: this drive can\'t link files, so they take space twice)' : ' (linked to the originals, so they take no extra space)'}.</p>` : '';
+  box.innerHTML = `<h3>Where records are kept</h3>
+    <div class="muted small">The original files (PDFs, scans, health summaries) are kept in ${where}.
+    ${st.folder ? 'You can choose another folder on the server' : 'Choose a folder on the server instead'}, such as a bigger disk or a shared folder: the files move there, and a readable copy is kept beside them,
+    sorted like <code>Name/04 Labs/2024-03-05_Clinic_Title.pdf</code>. Files you add to that folder yourself are left alone.</div>
+    ${state}${readable}
+    <form class="edit" id="stf"><label>Folder on the server<input name="folder" value="${esc(st.folder||'')}" placeholder="/mnt/records/health" autocomplete="off" ${moving?'disabled':''}></label></form>
+    <div class="row-actions" style="justify-content:flex-start">${st.folder?`<button class="btn" id="stback" ${moving?'disabled':''}>Back to the data folder</button>`:''}<button class="btn" id="stgo" ${moving?'disabled':''}>Move records here</button></div>
+    <p class="muted small" id="stmsg"></p>`;
+  const go = async folder => {
+    if(!folder && !st.folder){ $('#stmsg').textContent = 'Type the folder on the server first.'; return; }
+    const to = folder || 'the dashboard\'s own data folder';
+    if(!confirm(`Move every person's original files to ${to}? Nothing is deleted; they are moved, and checked when copied to another disk.`)) return;
+    try{ await api('/api/storage', {method:'POST', body:JSON.stringify({folder})}); storagePanel(); }
+    catch(e){ $('#stmsg').textContent = e.message; }
+  };
+  $('#stf').onsubmit = e => { e.preventDefault(); go($('#stf input').value.trim()); };
+  $('#stgo').onclick = () => go($('#stf input').value.trim());
+  if($('#stback')) $('#stback').onclick = () => go('');
+  // while moving, and until the readable copy is made, look again shortly
+  if(moving || (st.folder && st.available && s.readable == null && s.state !== 'error'))
+    setTimeout(() => { if(dlg.open && $('#storagebox')) storagePanel(); }, moving ? 1000 : 2500);
+}
+
+// add a family member: their own records, kept apart; then show them
+function addPerson(){
+  show('<h2>Add a family member</h2>', `<p class="muted small">They get their own records, kept apart from everyone else's.
+    Switch between people with the menu at the top. Everyone who can use this dashboard can see every person's records.</p>
+    <form class="edit" id="npf"><label>Name<input name="name" required maxlength="60" autocomplete="off" placeholder="For example Alex"></label></form>
+    <div class="row-actions"><button class="btn" id="npcancel">Cancel</button><button class="btn primary" id="npadd">Add</button></div>
+    <p class="muted small" id="npmsg"></p>`);
+  const input = $('#npf input');
+  input.focus();
+  const go = async () => {
+    const name = input.value.trim();
+    if(!name){ $('#npmsg').textContent = 'Type their name.'; return; }
+    $('#npadd').disabled = true;
+    try{ const p = await api('/api/people', {method:'POST', body:JSON.stringify({name})}); await loadPeople(); switchPerson(p.id); dlg.close(); }
+    catch(e){ $('#npmsg').textContent = e.message; $('#npadd').disabled = false; }
+  };
+  $('#npadd').onclick = go;
+  $('#npf').onsubmit = e => { e.preventDefault(); go(); };
+  $('#npcancel').onclick = () => dlg.close();
+}
 
 async function boot(){
   let a = {auth:false};

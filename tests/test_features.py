@@ -297,6 +297,30 @@ class ServerTests(StoreCase):
         self.assertEqual(sorted(d['orig_path'] for d in self.store.documents() if d['id'] != sha),
                          ['letter.pdf', 'visit.pdf'])
 
+    def _stored(self, ext, data, path):
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest()
+        with open(os.path.join(self.files, sha + ext), 'wb') as f:
+            f.write(data)
+        self.store.upsert_documents([{'id': sha, 'ext': ext, 'path': path, 'status': 'done', 'needs_review': False}])
+        return sha
+
+    def test_stored_files_that_could_run_script_are_sandboxed(self):
+        # an .xml file may hold XHTML script, which a browser would run as the dashboard
+        xml = self._stored('.xml', b'<html xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></html>', 'a.xml')
+        pdf = self._stored('.pdf', b'%PDF-1 sample', 'b.pdf')
+        _, h = self.get('/file/' + xml)
+        self.assertTrue(h['Content-Security-Policy'].startswith('sandbox'))
+        _, h = self.get('/file/' + pdf)
+        self.assertIsNone(h['Content-Security-Policy'])     # browsers' PDF viewers refuse a sandbox
+
+    def test_large_file_and_non_latin_name_download(self):
+        data = b'%PDF-1 ' + os.urandom(3 * 1024 * 1024)
+        sha = self._stored('.pdf', data, 'Records/\u691c\u67fb\u7d50\u679c report.pdf')
+        with urllib.request.urlopen(self.url + f'/file/{sha}?download=1') as r:
+            self.assertEqual(r.read(), data)                # sent in pieces, all of it
+            self.assertEqual(r.headers['Content-Disposition'], 'attachment; filename="____ report.pdf"')
+
     def test_portal_exports_are_still_exports(self):
         def zipped(names):
             buf = io.BytesIO()
@@ -311,6 +335,43 @@ class ServerTests(StoreCase):
         self.assertTrue(is_export(zipped(['AllPatientData.json', 'scan.pdf'])))
         self.assertTrue(is_export(zipped(['summary.xml'])))
         self.assertFalse(is_export(zipped(['a.pdf', 'b.jpg', 'summary.xml'])))
+
+
+class CheckCacheTests(StoreCase):
+    def test_checks_are_worked_out_once_until_records_change(self):
+        from healthdash import checks
+        self.store.create('conditions', {'name': 'Sample arthritis of knee'})
+        runs, real = [], checks._dup_conditions
+        checks._dup_conditions = lambda st: runs.append(1) or real(st)
+        try:
+            for _ in range(3):
+                checks.issues(self.store)
+            self.assertEqual(len(runs), 1)                          # the same records: from the cache
+            self.store.create('conditions', {'name': 'Sample arthritis knee'})
+            self.assertEqual(len(checks.issues(self.store)), 1)     # a change: worked out again
+            self.assertEqual(len(runs), 2)
+        finally:
+            checks._dup_conditions = real
+
+
+class XmlGuardTests(unittest.TestCase):
+    def test_doctype_after_a_long_comment_is_refused(self):
+        head = b'<!--' + b'x' * 300000 + b'--><!DOCTYPE ClinicalDocument [<!ENTITY a "aaaa">]>'
+        ccda.parse(DOC)                                    # a real summary is read
+        with self.assertRaises(ccda.NotCCDA):
+            ccda.parse(DOC.replace(b'<ClinicalDocument', head + b'<ClinicalDocument', 1))
+
+    def test_export_zip_that_unpacks_too_big_is_refused(self):
+        old = ccda.MAX_UNPACKED
+        ccda.MAX_UNPACKED = 1000
+        try:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+                z.writestr('IHE_XDM/a/DOC0001.XML', b'<x>' + b' ' * 2000 + b'</x>')
+            with self.assertRaises(ccda.NotCCDA):
+                ccda.documents_in(buf.getvalue())
+        finally:
+            ccda.MAX_UNPACKED = old
 
 
 if __name__ == '__main__':

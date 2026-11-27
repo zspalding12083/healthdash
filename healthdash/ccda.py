@@ -19,6 +19,8 @@ from . import codes
 N = '{urn:hl7-org:v3}'
 XSI_TYPE = '{http://www.w3.org/2001/XMLSchema-instance}type'
 MAX_MEMBERS, MAX_XML = 2000, 50 * 1024 * 1024
+MAX_UNPACKED = 2 * 1024 ** 3   # everything in one export zip, unpacked (guards against zip bombs)
+DTD = re.compile(rb'<!\s*(doctype|entity)', re.I)
 SECTIONS = {  # LOINC section code -> what it is
     '30954-2': 'results', '8716-3': 'vitals', '10160-0': 'medications', '11450-4': 'problems',
     '11348-0': 'resolved', '48765-2': 'allergies', '46240-8': 'encounters', '29299-5': 'reason',
@@ -111,8 +113,7 @@ def _key(*parts):
 
 def parse(data):
     """One C-CDA document (bytes) -> dict, or NotCCDA."""
-    head = data[:4096].lower()
-    if b'<!doctype' in head or b'<!entity' in data[:200000].lower():
+    if DTD.search(data):   # anywhere in the file: a long comment could push it past any fixed point
         raise NotCCDA('XML with a DOCTYPE or entities is not accepted')
     try:
         root = ET.fromstring(data)
@@ -467,6 +468,8 @@ def documents_in(data, name=''):
         members = [i for i in z.infolist() if not i.is_dir()]
         if len(members) > MAX_MEMBERS:
             raise NotCCDA('too many files in the zip')
+        if sum(i.file_size for i in members) > MAX_UNPACKED:
+            raise NotCCDA('the zip unpacks too big to be a health summary export')
         out = []
         for i in members:
             base = i.filename.rsplit('/', 1)[-1]

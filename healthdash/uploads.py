@@ -48,6 +48,14 @@ def default_extract(path):
     return extract_file(path)
 
 
+def write_page(path, text):
+    """Write a readable page into the files folder: a new file swapped in, which works even when the
+    old one is read-only (stored files are, once in the readable copy; see storage.py)."""
+    with open(path + '.tmp', 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.replace(path + '.tmp', path)
+
+
 def safe_name(name):
     name = os.path.basename((name or '').replace('\\', '/')).strip() or 'upload'
     name = re.sub(r'[^\w.\- ()&,]+', '_', name)
@@ -61,6 +69,11 @@ class Uploads:
         """Start the background worker and queue anything unfinished and any one-time passes due."""
         self.store, self.files_dir = store, files_dir
         self.extract = extractor or default_extract
+        # shared with storage.Storage, which takes both while files move to another folder:
+        # `lock` around writing a file (briefly), `work_lock` around reading one (a whole OCR run)
+        self.lock = threading.RLock()
+        self.work_lock = threading.RLock()
+        self.changed = lambda: None   # told when files change (the readable copy follows)
         self.q = queue.Queue()
         threading.Thread(target=self._work, daemon=True, name='uploads').start()
         for d in store.documents():  # finish anything interrupted by a restart
@@ -120,11 +133,19 @@ class Uploads:
         old = self.store.document(sha)
         if old:
             return {'id': sha, 'duplicate': True, 'title': old['title'], 'status': old.get('status') or 'done'}
-        self.store.undelete('documents', sha)
-        tmp = os.path.join(self.files_dir, sha + ext + '.tmp')
-        with open(tmp, 'wb') as f:
-            f.write(data)
-        os.replace(tmp, os.path.join(self.files_dir, sha + ext))
+        if not self.lock.acquire(timeout=2):
+            raise ValidationError('the records are being moved to a new folder; add this again in a few minutes')
+        try:
+            if not os.path.isdir(self.files_dir):
+                raise ValidationError(f"the folder the records are kept in ({os.path.dirname(os.path.dirname(self.files_dir))}) "
+                                      "isn't there; is its drive connected?")
+            self.store.undelete('documents', sha)
+            tmp = os.path.join(self.files_dir, sha + ext + '.tmp')
+            with open(tmp, 'wb') as f:
+                f.write(data)
+            os.replace(tmp, os.path.join(self.files_dir, sha + ext))
+        finally:
+            self.lock.release()
         self.store.upsert_documents([{
             'id': sha, 'path': f'{UPLOAD_DIR}/{name}', 'orig_path': name, 'title': os.path.splitext(name)[0],
             'category': 'other', 'size': len(data), 'ext': ext, 'text': '', 'needs_review': True,
@@ -140,21 +161,24 @@ class Uploads:
             item = self.q.get()
             if isinstance(item, tuple) and item[1] is None:   # a background job, not a file
                 try:
-                    {'repage': self.repage, 'vaccines': self.backfill_vaccines, 'places': self.fix_places,
-                     'labnames': self.tidy_lab_names, 'conditions': self.merge_conditions_once,
-                     'meds': self.merge_meds_once, 'codes': self.backfill_codes}[item[0]]()
+                    with self.work_lock:
+                        {'repage': self.repage, 'vaccines': self.backfill_vaccines, 'places': self.fix_places,
+                         'labnames': self.tidy_lab_names, 'conditions': self.merge_conditions_once,
+                         'meds': self.merge_meds_once, 'codes': self.backfill_codes}[item[0]]()
                 except Exception:  # noqa: BLE001 - pages stay as they were; nothing else depends on it
                     traceback.print_exc()
                 continue
             resort = isinstance(item, tuple)
             sha = item[1] if resort else item
             try:
-                self.process(sha, reuse_text=resort)
+                with self.work_lock:     # never while the files are being moved
+                    self.process(sha, reuse_text=resort)
             except Exception as e:  # noqa: BLE001 - keep the worker alive, tell the person
                 if not isinstance(e, RuntimeError):  # RuntimeError: an expected, explained failure
                     traceback.print_exc()
                 self.store.set_upload_result(sha, status='error', needs_review=True,
                                              review_note=f"Couldn't read this file: {e}")
+            self.changed()
 
     def repage(self):
         """Draw the readable pages of imported health summaries again when page() has changed.
@@ -180,8 +204,7 @@ class Uploads:
                     page = ccda.page(ccda.parse(xml))
                 except ccda.NotCCDA:
                     continue
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(page)
+                write_page(path, page)
                 n += 1
         self.store.set_setting('page_version', ccda.PAGE_VERSION)
         return n
@@ -565,8 +588,7 @@ class Uploads:
         for xsha, name, doc in found:
             v = doc['visit']
             page = ccda.page(doc)
-            with open(os.path.join(self.files_dir, xsha + '.html'), 'w', encoding='utf-8') as f:
-                f.write(page)
+            write_page(os.path.join(self.files_dir, xsha + '.html'), page)
             stay = bool(v) and (HOSPITAL.search(v.get('kind') or '') or
                                 (v.get('end_date') and v.get('date') and v['end_date'][:10] > v['date'][:10]))
             title = ('Hospital stay' if stay else f"{v['kind'] or 'Office'} visit".replace('Office Visit visit', 'Office visit')) \
@@ -640,8 +662,7 @@ class Uploads:
         # a FHIR bundle (FollowMyHealth's AllPatientData.json): a summary page and a messages page
         for name, js, f in bundles:
             def page_doc(pid, title, page, category='other', date=None):
-                with open(os.path.join(self.files_dir, pid + '.html'), 'w', encoding='utf-8') as fh:
-                    fh.write(page)
+                write_page(os.path.join(self.files_dir, pid + '.html'), page)
                 docs.append({'id': pid, 'path': f"{IMPORTED_DIR}/{label}/{title}", 'orig_path': name, 'title': title,
                              'doc_date': date, 'category': category, 'ext': '.html', 'size': len(page),
                              'text': html_text(page), 'needs_review': False, 'status': 'done',

@@ -48,15 +48,30 @@ def _empty_files(d):
     return n
 
 
+def _files_folder(db):
+    """The files folder chosen on the dashboard (storage.py), or None."""
+    import sqlite3
+    import contextlib
+    try:
+        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True)) as con:
+            row = con.execute("SELECT value FROM setting WHERE key='files_folder'").fetchone()
+    except sqlite3.Error:
+        return None     # no settings yet
+    return row[0] if row and row[0] else None
+
+
 def targets(db, files):
     """(label, database, files folder) for the main person and each person under <state>/people/."""
-    out = [('main', db, files)]
+    from .storage import store_dir
+    folder = _files_folder(db)      # files kept in a chosen folder: they are there, not in the data folder
+    out = [('main', db, store_dir(folder, 'main') if folder else files)]
     people = os.path.join(os.path.dirname(os.path.abspath(db)), 'people')
     if os.path.isdir(people):
         for pid in sorted(os.listdir(people)):
             p = os.path.join(people, pid)
             if os.path.isfile(os.path.join(p, 'health.db')):
-                out.append((pid, os.path.join(p, 'health.db'), os.path.join(p, 'files')))
+                out.append((pid, os.path.join(p, 'health.db'),
+                            store_dir(folder, pid) if folder else os.path.join(p, 'files')))
     return out
 
 
@@ -70,6 +85,10 @@ def wipe(db, files, yes=False, ask=input):
     if not yes and ask('Type WIPE to go ahead: ').strip() != 'WIPE':
         print('nothing changed')
         return 1
+    folder = _files_folder(db)
+    if folder:      # the readable copy of the files (storage.py) goes too
+        from .storage import unmirror
+        unmirror(folder)
     for label, d, f in todo:
         counts = _empty_db(d)
         n = _empty_files(f)

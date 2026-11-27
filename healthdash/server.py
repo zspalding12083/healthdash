@@ -51,6 +51,21 @@ h1,h2,h3{line-height:1.25;margin:14px 0 6px}a{color:#256c6c}
 """
 
 
+# stored files are shown with this policy (all but PDFs): a sandbox with no script and no loads
+FILE_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"
+
+
+def stored_file(files_dir, sha, ext=None):
+    """The name of the stored file for a document (<sha>.<ext>), or None. Tries the document's own
+    extension first, so the folder is only listed when that isn't it."""
+    if ext and os.path.isfile(os.path.join(files_dir, sha + ext)):
+        return sha + ext
+    for f in os.listdir(files_dir):
+        if f.split('.')[0] == sha and not f.endswith('.tmp'):
+            return f
+    return None
+
+
 # what a browser-plugin key may do: add files, see how they were filed, check it's connected
 KEY_ROUTES = {('POST', 'upload'), ('GET', 'documents'), ('GET', 'auth'), ('GET', 'health'), ('GET', 'people')}
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
@@ -95,13 +110,15 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
 
         # ---- plumbing ------------------------------------------------------------------
 
-        def _send(self, code, body, ctype='application/json; charset=utf-8', extra=None):
-            """Send a response: JSON for anything that is not bytes, with no caching of private data."""
-            if not isinstance(body, (bytes, bytearray)):
+        def _send(self, code, body, ctype='application/json; charset=utf-8', extra=None, length=None):
+            """Send a response: JSON for anything that is not bytes, with no caching of private data.
+            `body` may also be an open binary file, sent in pieces (give its `length`)."""
+            stream = hasattr(body, 'read')
+            if not stream and not isinstance(body, (bytes, bytearray)):
                 body = json.dumps(body).encode()
             self.send_response(code)
             self.send_header('Content-Type', ctype)
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Length', str(length if stream else len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('X-Frame-Options', 'SAMEORIGIN')     # no other site may frame the dashboard
@@ -109,7 +126,12 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
-            if self.command != 'HEAD':
+            if self.command == 'HEAD':
+                return
+            if stream:
+                import shutil
+                shutil.copyfileobj(body, self.wfile, 1024 * 1024)
+            else:
                 self.wfile.write(body)
 
         def _err(self, code, msg):
@@ -206,7 +228,10 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 if not self._allowed(method, parts):
                     return self._err(401, 'please sign in')
                 self.ctx = people.get(self.headers.get('X-Person') or qs.get('p') or MAIN)
-                return self._dispatch(method, parts, qs)
+                r = self._dispatch(method, parts, qs)
+                if method not in ('GET', 'HEAD') and people.storage:
+                    people.storage.poke()      # names, dates or files may have changed: the readable copy follows
+                return r
             except ValidationError as e:
                 return self._err(400, str(e))
             except Exception as e:  # noqa: BLE001
@@ -241,6 +266,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if parts[0] != 'api':
                 return self._err(404, 'not found')
             p = parts[1:]
+            if p == ['storage'] and people.storage:
+                return self._storage(method)
             r = self._accounts(method, p)
             if r is not False:
                 return r
@@ -417,6 +444,25 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             auth.set_required(False)
             return self._send(200, {'auth': False}, extra={'Set-Cookie': auth.cookie(None)})
 
+        def _storage(self, method):
+            """Where the original records are kept (storage.py): GET shows the folder and how a move
+            is going; POST {folder} starts moving everyone's files there ('' = back to the data folder)."""
+            from .storage import StorageError
+            st = people.storage
+            if method == 'GET':
+                return self._send(200, st.info())
+            if method == 'POST':
+                try:
+                    return self._send(202, st.set_folder((self._json() or {}).get('folder') or ''))
+                except StorageError as e:
+                    return self._err(400, str(e))
+            return self._err(404, 'not found')
+
+        def _files_lock(self):
+            """Held while writing a stored file, so it can't land mid-move to another folder."""
+            import contextlib
+            return people.storage.lock if people.storage else contextlib.nullcontext()
+
         def _move(self, did, to):
             """Move a document, and the entries made only from it, to another person."""
             src = people.get(self.headers.get('X-Person') or MAIN)
@@ -425,10 +471,11 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 raise ValidationError('that is already who it belongs to')
             doc, records = src.store.take_document(did, dst.id)
             import shutil
-            for f in os.listdir(src.files_dir):
-                if f.split('.')[0] == did and not f.endswith('.tmp'):
-                    shutil.copy2(os.path.join(src.files_dir, f), os.path.join(dst.files_dir, f))
-                    os.remove(os.path.join(src.files_dir, f))
+            with self._files_lock():
+                for f in os.listdir(src.files_dir):
+                    if f.split('.')[0] == did and not f.endswith('.tmp'):
+                        shutil.copy2(os.path.join(src.files_dir, f), os.path.join(dst.files_dir, f))
+                        os.remove(os.path.join(src.files_dir, f))
             dst.store.give_document(doc, records)
             return {'moved': did, 'to': dst.id, 'entries': {k: len(v) for k, v in records.items()}}
 
@@ -469,10 +516,11 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             import hashlib
             if hashlib.sha256(data).hexdigest() != sha:
                 raise ValidationError('checksum mismatch')
-            tmp = os.path.join(self.ctx.files_dir, name + '.tmp')
-            with open(tmp, 'wb') as f:
-                f.write(data)
-            os.replace(tmp, os.path.join(self.ctx.files_dir, sha + '.' + ext.lower()))
+            with self._files_lock():
+                tmp = os.path.join(self.ctx.files_dir, name + '.tmp')
+                with open(tmp, 'wb') as f:
+                    f.write(data)
+                os.replace(tmp, os.path.join(self.ctx.files_dir, sha + '.' + ext.lower()))
             self.ctx.store.set_has_file(sha)
             return self._send(200, {'stored': name})
 
@@ -480,25 +528,30 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             """Send a stored file (inline, or as a download), with a reader style for saved web pages."""
             if not SHA_RE.match(sha):
                 return self._err(404, 'not found')
-            match = [f for f in os.listdir(self.ctx.files_dir) if f.split('.')[0] == sha and not f.endswith('.tmp')]
-            if not match:
-                return self._err(404, 'file not on the Pi yet')
-            fn = match[0]
-            ext = os.path.splitext(fn)[1].lower()
-            with open(os.path.join(self.ctx.files_dir, fn), 'rb') as f:
-                data = f.read()
             doc = self.ctx.store.document(sha) or {}
+            fn = stored_file(self.ctx.files_dir, sha, doc.get('ext'))
+            if not fn:
+                return self._err(404, 'file not on the Pi yet')
+            ext = os.path.splitext(fn)[1].lower()
             nice = os.path.basename(doc.get('organized_path') or doc.get('path') or fn)
-            nice = re.sub(r'[^\w.\- ]', '_', nice)
+            nice = re.sub(r'[^\w.\- ]', '_', nice, flags=re.ASCII)   # headers are Latin-1: plain letters only
             disp = 'attachment' if download else 'inline'
             extra = {'Content-Disposition': f'{disp}; filename="{nice}"'}
-            if ext == '.html':  # a saved portal page: show it, but never run it or let it load anything
-                extra['Content-Security-Policy'] = ("sandbox; default-src 'none'; style-src 'unsafe-inline'; "
-                                                    "img-src data:; font-src data:")
-                if not download:  # readable in the dashboard; the download stays exactly as saved
-                    i = data.lower().find(b'<head>')
-                    data = data[:i + 6] + READER_CSS + data[i + 6:] if i >= 0 else READER_CSS + data
-            return self._send(200, data, FILE_TYPES.get(ext, 'application/octet-stream'), extra)
+            if ext != '.pdf':
+                # Anything a browser could run as a page (a saved portal page, or an .xml file, which
+                # may hold XHTML script) is shown sandboxed: no script, nothing loaded from anywhere.
+                # Only PDFs are left out, which browsers show in their own viewer (that a sandbox blocks).
+                extra['Content-Security-Policy'] = FILE_CSP
+            path = os.path.join(self.ctx.files_dir, fn)
+            ctype = FILE_TYPES.get(ext, 'application/octet-stream')
+            if ext == '.html' and not download:  # readable in the dashboard; the download stays exactly as saved
+                with open(path, 'rb') as f:
+                    data = f.read()
+                i = data.lower().find(b'<head>')
+                data = data[:i + 6] + READER_CSS + data[i + 6:] if i >= 0 else READER_CSS + data
+                return self._send(200, data, ctype, extra)
+            with open(path, 'rb') as f:   # sent in pieces: a scan or an imaging zip can be large
+                return self._send(200, f, ctype, extra, length=os.fstat(f.fileno()).st_size)
 
         def _report(self, qs):
             """The printouts (report.py) for the chosen person. Options in the query: from, to (dates),
@@ -565,6 +618,8 @@ def serve(db_path, port, files_dir, import_from, host='0.0.0.0', title='Health R
     auth = Auth(store) if accounts else None
     people = People(store, files_dir, uploads, state_dir=os.path.dirname(os.path.abspath(db_path)),
                     make_uploads=Uploads, main_name=main_name or _first_name(title))
+    from .storage import Storage
+    Storage(people)   # the files folder people may choose (the setting is read here), and the readable copy
     httpd = ThreadingHTTPServer((host, port), make_handler(store, files_dir, set(import_from), title, uploads, auth,
                                                                 people, allow_hosts))
     print(f'healthdash on http://{host}:{port}  db={db_path}  files={files_dir}', flush=True)
