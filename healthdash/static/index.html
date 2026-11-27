@@ -199,6 +199,12 @@ details.panel[open] summary{margin-bottom:10px}
   #rtwo:not([hidden]){display:contents}#rtwo .slash{display:none}
   .labchart .ax{font-size:20px}   /* the charts shrink to the screen; keep their labels readable */
 }
+.setup{max-width:720px;margin:10px auto}.setup .steps{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
+.setup .steps span{font-size:12px;padding:3px 9px;border-radius:12px;background:var(--line2);color:var(--ink3)}
+.setup .steps span.on{background:var(--accent);color:#fff}.setup .steps span.done{background:var(--accent-soft);color:var(--ink2)}
+.setup h2{font-size:19px}.setup .lead{color:var(--ink2);margin:-4px 0 14px}
+.setup .ok{color:var(--ok);font-weight:600}.setup .navs{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:18px;flex-wrap:wrap}
+.setup .people-added{margin:6px 0 0;padding-left:18px}
 .lbl-sm{display:none}
 .ph-pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin:12px 0}
 .ph-pages figure{margin:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
@@ -1585,7 +1591,9 @@ async function openAccounts(){
     <h3>People</h3><div class="muted small">Each person's records are kept apart. Switch between them with the menu at the top.</div>
     <div class="acct-list" id="peoplelist"></div>
     <div class="row-actions" style="justify-content:flex-start"><button class="btn" id="addperson">＋ Add family member</button></div>
-    <div id="storagebox"></div>`);
+    <div id="storagebox"></div>
+    <p class="muted small" style="margin-top:16px"><a href="#" id="rerun">Run the first-time setup again</a> (whose records, sign-in, reading scans, where files are kept)</p>`);
+  $('#rerun').onclick = ev => { ev.preventDefault(); firstRun(0); };
   $('#peoplelist').innerHTML = PEOPLE.map(p => `<div><span><b>${esc(p.name)}</b>${p.id===PERSON?' <span class="tag">showing</span>':''}</span>
     <span><button class="btn" data-show="${esc(p.id)}">Show</button> <button class="btn" data-rename="${esc(p.id)}">Rename</button></span></div>`).join('');
   $('#peoplelist').querySelectorAll('[data-show]').forEach(b => b.onclick = () => { switchPerson(b.dataset.show); dlg.close(); });
@@ -1630,7 +1638,11 @@ $('#acct').onclick = () => openAccounts();
 
 let PEOPLE = [];
 async function loadPeople(){
-  try{ PEOPLE = await api('/api/people'); }catch(e){ PEOPLE = []; }
+  try{ PEOPLE = await api('/api/people'); }
+  catch(e){   // the person this browser last showed may be gone (another dashboard at this address): back to the main one
+    PEOPLE = [];
+    if(PERSON !== 'main'){ PERSON = 'main'; try{ localStorage.setItem('hd-person', 'main'); }catch(_){} try{ PEOPLE = await api('/api/people'); }catch(_){} }
+  }
   if(!PEOPLE.some(p => p.id === PERSON)){ PERSON = 'main'; }
   const sel = $('#person');
   // always shown (once there are people to show), so adding a family member is easy to find
@@ -1715,6 +1727,101 @@ function addPerson(){
   $('#npcancel').onclick = () => dlg.close();
 }
 
+// ---------- first-run setup: once, on a new dashboard (server.py _first_run) ----------
+const SETUP_STEPS = ['Whose records', 'Sign-in', 'Reading scans', 'Where files are kept', 'First records'];
+const SETUP_KEY = 'hd-setup-step';   // the step to come back to (turning on sign-in reloads the page)
+async function firstRun(step){
+  if(step == null){ try{ step = +(localStorage.getItem(SETUP_KEY) || 0); }catch(e){ step = 0; } }
+  step = Math.max(0, Math.min(SETUP_STEPS.length - 1, step || 0));
+  try{ localStorage.setItem(SETUP_KEY, String(step)); }catch(e){}
+  if(dlg.open) dlg.close();
+  $('#tabs').innerHTML = ''; $('#q').hidden = true;
+  const head = `<div class="steps">${SETUP_STEPS.map((t, i) => `<span class="${i===step?'on':i<step?'done':''}">${i+1}. ${t}</span>`).join('')}</div>`;
+  const navs = (next='Next') => `<div class="navs"><button class="btn" id="su-skip" title="Go straight to the dashboard; this can be run again from Accounts">Skip setup</button>
+    <span>${step ? '<button class="btn" id="su-back">Back</button> ' : ''}<button class="btn primary" id="su-next">${next}</button></span></div><p class="muted small" id="su-msg"></p>`;
+  const page = body => { $('#main').innerHTML = `<div class="panel setup">${head}${body}</div>`; bind($('#main'));
+    $('#su-skip').onclick = () => finishSetup(); if($('#su-back')) $('#su-back').onclick = () => firstRun(step - 1); };
+  const msg = t => { $('#su-msg').textContent = t; };
+  const next = () => firstRun(step + 1);
+  if(step === 0 && !PEOPLE.length){   // a dashboard without people and accounts: nothing to name here
+    page(`<h2>Welcome</h2><p class="lead">A few questions to set up this dashboard. Each one can be skipped and changed later.</p>${navs()}`);
+    $('#su-next').onclick = next;
+  }else if(step === 0){
+    const main = PEOPLE.find(p => p.id === 'main') || {name:''};
+    page(`<h2>Welcome</h2><p class="lead">A few questions to set up this dashboard. Each one can be skipped and changed later.</p>
+      <form class="edit" id="su-f"><label class="wide">Whose health records are these?<input name="name" value="${esc(firstRun.typed ?? main.name)}" maxlength="60" autocomplete="off" placeholder="Their name, for example Alex"></label></form>
+      <h3>Keeping records for others in the family too?</h3><p class="muted small" style="margin-top:-4px">Each person's records are kept apart; switch between them with the menu at the top. You can also add people later.</p>
+      <form class="radd" id="su-pf"><input name="name" maxlength="60" placeholder="Another person's name" autocomplete="off" style="flex:1 1 200px"><button class="btn">Add</button></form>
+      <ul class="people-added small">${PEOPLE.filter(p => p.id !== 'main').map(p => `<li>${esc(p.name)}</li>`).join('')}</ul>${navs()}`);
+    $('#su-pf').onsubmit = async ev => {
+      ev.preventDefault(); const name = ev.target.name.value.trim(); if(!name) return;
+      firstRun.typed = $('#su-f').name.value;   // keep the name typed above while the page is redrawn
+      try{ await api('/api/people', {method:'POST', body:JSON.stringify({name})}); await loadPeople(); firstRun(0); }catch(e){ msg(e.message); }
+    };
+    $('#su-next').onclick = async () => {
+      const name = $('#su-f').name.value.trim(); firstRun.typed = undefined;
+      if(name && name !== main.name){
+        try{ await api('/api/people/main', {method:'PUT', body:JSON.stringify({name})}); await loadPeople(); }catch(e){ return msg(e.message); }
+      }
+      next();
+    };
+  }else if(step === 1){
+    if(!AUTH.can_sign_in) return firstRun(step + 1);   // this dashboard runs without accounts
+    if(AUTH.auth){ page(`<h2>Sign-in</h2><p><span class="ok">✓ Sign-in is on.</span> You're signed in as <b>${esc(ME)}</b>. Add others under 👤 Accounts.</p>${navs()}`); $('#su-next').onclick = next; return; }
+    page(`<h2>Ask for a password?</h2><p class="lead">With sign-in off, anyone who can reach this dashboard on your home network can see and change everything. With it on, everyone needs a user name and password; the account you make here can add others.</p>
+      <form class="edit" id="su-af"><label>User name<input name="username" autocapitalize="none" autocomplete="username"></label>
+      <label>Password (8+ characters)<input name="password" type="password" autocomplete="new-password"></label>
+      <label>Password again<input name="password2" type="password" autocomplete="new-password"></label></form>
+      <p class="muted small">Passwords cross your home network without encryption, so this keeps casual visitors out; it is not for the open internet.</p>${navs('Turn on sign-in')}
+      <p style="text-align:right;margin:0"><button class="btn" id="su-noauth">Not now, keep it open on my network</button></p>`);
+    $('#su-noauth').onclick = next;
+    $('#su-next').onclick = async () => {
+      const b = Object.fromEntries(new FormData($('#su-af')).entries());
+      if(!b.username.trim() || !b.password) return msg('Type a user name and a password, or choose "Not now".');
+      if(b.password !== b.password2) return msg("Passwords don't match.");
+      try{ await api('/api/login-required', {method:'POST', body:JSON.stringify({on:true, username:b.username.trim(), password:b.password})}); }
+      catch(e){ return msg(e.message); }
+      try{ localStorage.setItem(SETUP_KEY, String(step + 1)); }catch(e){}
+      location.reload();
+    };
+  }else if(step === 2){
+    await checkHealth();
+    page(`<h2>Reading PDFs and scans</h2>` + (HEALTH.can_read
+      ? `<p><span class="ok">✓ This server can read PDFs, scans and photos.</span> Text in pictures is read by OCR, on this server only.</p>`
+      : `<p class="lead">This server is missing the programs that read PDFs and scans (${esc((HEALTH.missing||[]).join(', '))}). Files you add are kept, and read automatically within a minute once they're installed. On the server:</p>
+         <pre class="doctext">${esc(HEALTH.fix||'')}</pre><p class="muted small">To check afterwards: <code>python3 -m healthdash check</code></p>`) + navs());
+    $('#su-next').onclick = next;
+  }else if(step === 3){
+    let info = null; try{ info = await api('/api/storage'); }catch(e){}
+    if(!info) return firstRun(step + 1);
+    page(`<h2>Where the original files are kept</h2><p class="lead">Every PDF, scan and photo you add is kept as it is. By default they go in the dashboard's own data folder${info.default ? ` (<code>${esc(info.default)}</code>)` : ''}. You can choose a folder on the server instead, such as a bigger disk or a shared folder; a readable copy is kept there too, sorted by person and kind.</p>
+      <form class="edit" id="su-sf"><label class="wide">Another folder on the server (optional)<input name="folder" value="${esc(info.folder||'')}" placeholder="/mnt/records/health" autocomplete="off"></label></form>${navs()}`);
+    $('#su-next').onclick = async () => {
+      const folder = $('#su-sf').folder.value.trim();
+      if(folder && folder !== (info.folder||'')){
+        try{ await api('/api/storage', {method:'POST', body:JSON.stringify({folder})}); }catch(e){ return msg(e.message); }
+      }
+      next();
+    };
+  }else{
+    page(`<h2>Add the first records</h2><p class="lead">Each file is read and sorted on its own: visits, tests, lab results, medicines and more are filled in, and anything unclear goes to <b>Needs review</b>. You can keep using the dashboard while they're read.</p>
+      <div class="choices">
+        <button id="su-photo"><b>📷 Photos of a paper record</b><span class="small muted">One photo per page, from a phone or tablet camera.</span></button>
+        <button id="su-files"><b>Files</b><span class="small muted">PDFs, scans or photos, or a health summary downloaded from a patient portal (.zip or .xml).</span></button>
+        <button id="su-dir"><b>A whole folder</b><span class="small muted">Everything in it and its subfolders.</span></button></div>
+      <p class="muted small">Most patient portals (MyChart and others) let you download a health summary of everything they hold; adding that one file fills in years of visits, lab results and medicines.</p>${navs('Finish')}`);
+    $('#su-photo').onclick = () => photoRecord();
+    $('#su-files').onclick = () => $('#uplf').click();
+    $('#su-dir').onclick = () => $('#upld').click();
+    $('#su-next').onclick = () => finishSetup();
+  }
+}
+async function finishSetup(){
+  try{ await api('/api/firstrun', {method:'POST', body:'{}'}); }catch(e){}
+  try{ localStorage.removeItem(SETUP_KEY); }catch(e){}
+  $('#q').hidden = false; S.tab = 'timeline'; invalidate(); render();
+}
+
 async function boot(){
   let a = {auth:false};
   try{ a = await fetch('/api/auth').then(r => r.json()); }catch(e){}
@@ -1727,6 +1834,9 @@ async function boot(){
   const start = location.hash.slice(1);
   if(TABS.some(t => t[0]===start)) S.tab = start;
   checkHealth();
+  let fr = null; try{ fr = await api('/api/firstrun'); }catch(e){}
+  let midway = false; try{ midway = localStorage.getItem(SETUP_KEY) != null; }catch(e){}
+  if(fr && (fr.needed || (midway && !fr.done))) return firstRun();   // new, or setup under way here (it reloads after sign-in)
   render();
 }
 boot();

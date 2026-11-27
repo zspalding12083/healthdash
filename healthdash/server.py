@@ -12,7 +12,7 @@ import html
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -66,6 +66,7 @@ def stored_file(files_dir, sha, ext=None):
     return None
 
 
+SETUP_DONE = 'setup_done'   # setting in the main database: the first-run setup was finished or skipped
 PUBLIC_API = {('GET', 'auth'), ('POST', 'login'), ('POST', 'setup'), ('POST', 'logout')}
 
 
@@ -252,6 +253,8 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
             if parts[0] != 'api':
                 return self._err(404, 'not found')
             p = parts[1:]
+            if p == ['firstrun']:
+                return self._first_run(method)
             if p == ['storage'] and people.storage:
                 return self._storage(method)
             if p == ['emergency']:
@@ -433,6 +436,21 @@ def make_handler(store, files_dir, import_from, title='Health Records', uploads=
                 return self._err(401, 'please sign in')
             auth.set_required(False)
             return self._send(200, {'auth': False}, extra={'Set-Cookie': auth.cookie(None)})
+
+        def _first_run(self, method):
+            """The first-run setup (index.html firstRun). GET: whether to show it: only on a new dashboard
+            (one person, nothing recorded yet) where it hasn't been finished or skipped; `done` lets a
+            setup already under way carry on after a reload (people added, sign-in turned on). POST: it was
+            finished or skipped, so it doesn't show again (Accounts can still open it)."""
+            main = people.get(MAIN)
+            if method == 'GET':
+                done = bool(main.store.get_setting(SETUP_DONE))
+                needed = not done and len(people.list()) == 1 and main.store.is_empty()
+                return self._send(200, {'needed': needed, 'done': done, 'name': main.name})
+            if method == 'POST':
+                main.store.set_setting(SETUP_DONE, datetime.now().isoformat(timespec='seconds'))
+                return self._send(200, {'done': True})
+            return self._err(405, 'not allowed')
 
         def _storage(self, method):
             """Where the original records are kept (storage.py): GET shows the folder and how a move

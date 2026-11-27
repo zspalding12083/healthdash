@@ -80,6 +80,15 @@ the same upload as any file, so the same first-bytes check, size handling and ba
 apply; the photos never leave the page except as that PDF. Page thumbnails are local `blob:` URLs,
 released when the dialog closes or a page is removed.
 
+## First-run setup (2026-11-27)
+
+One new route, `/api/firstrun`, under the usual access rules (with sign-in on, only someone signed in).
+It only reads whether the dashboard is empty and sets one setting; the steps themselves use the
+existing routes for renaming and adding people, turning on sign-in (`/api/login-required`, which
+makes the first account) and choosing the files folder (`/api/storage`, with its folder checks). On a
+new dashboard with sign-in off, whoever opens it first can turn sign-in on and make the first
+account, as before; the setup just puts that choice in front of them.
+
 ## Browser plugin removed (2026-11-27)
 
 The Firefox plugin and its keys are gone: there is no `Authorization: Bearer` access any more, no

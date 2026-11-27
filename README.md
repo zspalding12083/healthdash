@@ -74,6 +74,10 @@ Mac on the home network.
 - **Lab trends**: the latest result of every test with its normal range and the change since last
   time, out-of-range results first, grouped by kind (blood counts, kidney, liver, sugar...). Click a
   test for a chart of every value, one hospital stay at a time or all years.
+- **First-run setup**: a new dashboard (nothing in it yet) opens with five short steps: whose records
+  these are (and anyone else in the family), whether to ask for a password, whether the server can
+  read scans (and how to fix it if not), where the original files are kept, and adding the first
+  records. Every step can be skipped, and **👤 Accounts** can run it again.
 - **Sign-in (optional)**: off on a new dashboard, so anyone on your network can open it. Turn it on
   under **👤 Accounts**, which makes the first account at the same time; after that, anyone signed in
   can add or remove accounts, reset passwords, or turn sign-in off again. All accounts are equal.
@@ -210,8 +214,9 @@ On the server:
 1. `cp deploy/local.env.example deploy/local.env` and fill in the server login, URL and ingest IP.
 2. `deploy/install.sh` once (asks for sudo on the server), then `deploy/sync.sh push` for code
    changes, `deploy/sync.sh ingest` for new records, `deploy/sync.sh backup` for a database copy.
-3. Sign-in starts off. To require it, open **👤 Accounts** and turn it on (it makes the first
-   account), or on the server run `python3 -m healthdash user add NAME --db <database>` then
+3. Open the dashboard: the first-run setup asks whose records they are, whether to turn on sign-in,
+   and where to keep the files. Sign-in starts off; to require it later, open **👤 Accounts** and
+   turn it on (it makes the first account), or on the server run `python3 -m healthdash user add NAME --db <database>` then
    `python3 -m healthdash login on --db <database>`.
 
 Edits made on the dashboard are kept: re-importing never overwrites a record someone changed by hand.

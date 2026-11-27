@@ -75,6 +75,20 @@ class PeopleTests(unittest.TestCase):
                 return
             time.sleep(0.05)
 
+    def test_first_run_setup_only_on_a_new_dashboard(self):
+        self.assertEqual(self.call('/api/firstrun')[1], {'needed': True, 'done': False, 'name': 'Jane'})
+        self.assertEqual(self.call('/api/firstrun', headers={'Cookie': ''})[0], 401)      # sign-in is on here
+        self.call('/api/people', {'name': 'Sam'}, 'POST')                                  # added during setup
+        self.assertEqual(self.call('/api/firstrun')[1]['needed'], False)
+        self.assertEqual(self.call('/api/firstrun')[1]['done'], False)                     # so a setup under way carries on
+        self.assertEqual(self.call('/api/firstrun', {}, 'POST')[0], 200)
+        self.assertEqual(self.call('/api/firstrun')[1]['done'], True)
+        st = Store(os.path.join(self.state, 'other.db'))
+        self.assertTrue(st.is_empty())
+        st.create('conditions', {'name': 'Sample asthma'})
+        self.assertFalse(st.is_empty())                                                    # a dashboard with records never asks
+        st.close()
+
     def test_records_stay_with_their_person(self):
         self.assertEqual(self.call('/api/people')[1], [{'id': 'main', 'name': 'Jane'}])
         code, p = self.call('/api/people', {'name': 'Sam Sample'}, 'POST')

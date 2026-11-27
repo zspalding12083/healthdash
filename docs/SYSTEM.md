@@ -212,7 +212,10 @@ immunizations, life_events`), `order=oldest`, `download=1` (the same page as an 
 allergies and current medicines instead (`otc=0` leaves out over-the-counter ones); `view=card`
 the emergency card; `view=questions` the open questions to take to a visit (`ask=` for one doctor's,
 with the ones for anyone); `view=readings` the home readings log (`days=N`, `types=a,b`).
-`POST /api/readings/paste` with `{type, unit, text}` reads pasted lines and says what it found and
+`GET /api/firstrun` says whether the first-run setup should show: `needed` on a new dashboard (one
+person, nothing recorded, setup never finished or skipped), and `done` once it was (the setting
+`setup_done` in the main database), so a setup under way carries on after a reload. `POST` marks it
+done. `POST /api/readings/paste` with `{type, unit, text}` reads pasted lines and says what it found and
 what is new; with `apply: true` it saves the new ones. `GET /api/emergency` gives the card's details and the current conditions to
 choose from; `PUT /api/emergency` saves the details. The
 page allows no outside content and only its own Print script (a per-page nonce, also in a meta tag

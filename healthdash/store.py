@@ -892,6 +892,10 @@ class Store:
         with self.lock:
             return [r[0] for r in self.db.execute('SELECT DISTINCT analyte FROM labs') if r[0]]
 
+    def is_empty(self):
+        """No documents and no entries of any kind yet (a new dashboard)."""
+        return not any(self.db.execute(f'SELECT 1 FROM {t} LIMIT 1').fetchone() for t in ['documents', *KINDS])
+
     def get_setting(self, key):
         with self.lock:
             self.db.execute('CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT)')
