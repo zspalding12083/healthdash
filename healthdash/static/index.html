@@ -167,7 +167,44 @@ details.panel[open] summary{margin-bottom:10px}
   .medrow,.axis{grid-template-columns:110px 1fr}
   .ev{grid-template-columns:78px 10px 1fr}
   .hide-sm{display:none}
+  .axis .ticks span.minor{display:none}
 }
+/* phones: a compact header, roomier cards, full-screen dialogs, and tables as one card per row */
+@media (max-width:700px){
+  .bar{padding:8px 10px;gap:8px}
+  .brand{font-size:15px;flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .bar .btn{padding:7px 10px}.bar .btn .lbl{display:none}.bar .btn .lbl-sm{display:inline}
+  #person{order:9;flex:1 1 100%}
+  #q{order:10;flex:1 1 100%;min-width:0}
+  nav button{padding:8px 9px}
+  main{padding:10px}
+  .panel{padding:12px;border-radius:10px;margin-bottom:10px}
+  input,select,textarea{font-size:16px}   /* an iPhone zooms into any smaller text field */
+  .panel>div[style*="space-between"]{flex-wrap:wrap;gap:8px}
+  dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border-radius:0}
+  .dlg-b{max-height:calc(100dvh - 64px);padding:12px}
+  .dlg-h{padding:10px 12px}
+  .tablewrap table.stacked,.tablewrap table.stacked tbody{display:block}
+  .tablewrap table.stacked thead{display:none}
+  .tablewrap table.stacked tr{display:block;padding:9px 2px;border-bottom:1px solid var(--line2)}
+  .tablewrap table.stacked td{display:block;border:0;padding:1px 0}
+  .tablewrap table.stacked td:empty{display:none}
+  .tablewrap table.stacked td[data-label]:not([data-label=""])::before{content:attr(data-label) ": ";color:var(--ink3);font-size:12px}
+  .tablewrap table.stacked td:first-child::before{content:none}
+  .tablewrap table.stacked td:first-child{color:var(--ink2);font-size:13px}
+  .radd select[name=type],.radd input[name=other],.radd input[name=notes]{flex:1 1 100%}
+  .radd input.d{order:1;flex:1 1 40%;width:auto;min-width:0}.radd input.t{order:2;flex:1 1 25%;width:auto;min-width:0}.radd input.u{order:3;flex:1 1 18%;width:auto;min-width:0}
+  .radd input.n{order:4;flex:1 1 26%;width:auto;min-width:0}
+  .radd input[name=notes]{order:5}.radd button{order:6;flex:1 1 100%}
+  #rtwo:not([hidden]){display:contents}#rtwo .slash{display:none}
+  .labchart .ax{font-size:20px}   /* the charts shrink to the screen; keep their labels readable */
+}
+.lbl-sm{display:none}
+.ph-pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin:12px 0}
+.ph-pages figure{margin:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.ph-pages img{display:block;width:100%;height:150px;object-fit:cover;object-position:top}
+.ph-pages figcaption{display:flex;justify-content:space-between;align-items:center;padding:4px 6px;font-size:12px}
+.ph-pages figcaption .btn{padding:1px 7px}
 </style>
 </head>
 <body>
@@ -176,10 +213,10 @@ details.panel[open] summary{margin-bottom:10px}
     <div class="brand">__TITLE__<small id="span"></small></div>
     <select id="person" hidden title="Whose records"></select>
     <input id="q" type="search" placeholder="Search everything: a test, a doctor, a medication, a word in any report…" autocomplete="off">
-    <button class="btn primary" id="upl" title="Add PDFs, photos, a folder or a zip of records">＋ Add records</button>
+    <button class="btn primary" id="upl" title="Add PDFs, photos, a folder or a zip of records">＋<span class="lbl"> Add records</span><span class="lbl-sm"> Add</span></button>
     <input type="file" id="uplf" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.zip,.xml,application/pdf,image/*,application/zip" hidden>
     <input type="file" id="upld" webkitdirectory multiple hidden>
-    <button class="btn" id="rep" title="A summary of the records to print or save as a PDF">🖨 Summary</button>
+    <button class="btn" id="rep" title="A summary of the records to print or save as a PDF">🖨<span class="lbl"> Summary</span></button>
     <button class="btn" id="theme" title="Light / dark">◐</button>
     <button class="btn" id="acct" hidden title="Accounts and sign out"></button>
   </div>
@@ -289,7 +326,17 @@ async function render(){
     bind(m);
   }catch(e){ m.innerHTML = `<div class="panel">Couldn't load: ${esc(e.message)}</div>`; }
 }
+// on phones each table row shows as a card, every value under its column's name (CSS table.stacked)
+function cardTables(root){
+  root.querySelectorAll('.tablewrap table:not(.stacked)').forEach(t => {
+    const heads = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    if(!heads.length) return;
+    t.classList.add('stacked');
+    t.querySelectorAll('tbody tr').forEach(tr => [...tr.cells].forEach((td, i) => td.dataset.label = heads[i] || ''));
+  });
+}
 function bind(root){
+  cardTables(root);
   root.querySelectorAll('[data-open]').forEach(el => el.onclick = ev => { ev.stopPropagation(); const [k,id] = el.dataset.open.split('|'); openRecord(k,id); });
   root.querySelectorAll('[data-doc]').forEach(el => el.onclick = ev => { ev.stopPropagation(); openDoc(el.dataset.doc, el.dataset.date, el.dataset.end); });
   root.querySelectorAll('[data-add]').forEach(el => el.onclick = () => editRecord(el.dataset.add, null));
@@ -376,7 +423,7 @@ VIEWS.meds = async () => {
     for(const m of dated) (byName[m.name] ||= []).push(m);
     const names = Object.keys(byName).sort((a,b) => { const sa = Math.min(...byName[a].map(m=>pct(m.start_date||m.end_date))), sb = Math.min(...byName[b].map(m=>pct(m.start_date||m.end_date))); return sa-sb; });
     const y0 = +all[0].slice(0,4), y1 = +today.slice(0,4); const step = Math.max(1, Math.ceil((y1-y0)/8));
-    let ticks = ''; for(let y=y0; y<=y1; y+=step) ticks += `<span style="left:${pct(y+'-01-01')}%">${y}</span>`;
+    let ticks = ''; for(let y=y0, i=0; y<=y1; y+=step, i++) ticks += `<span class="${i%2?'minor':''}" style="left:${pct(y+'-01-01')}%">${y}</span>`;   // every other year hidden on narrow screens
     html += `<div class="panel"><h2>Medication history</h2><p class="muted small" style="margin-top:-6px">Each bar runs from when a medication shows up as started to when it was stopped. A faded start means the records don't say when it began, only when it was first listed.</p><div class="medbars">` +
       names.map(n => `<div class="medrow" data-open="medications|${esc(byName[n][0].id)}"><div class="nm" title="${esc(n)}">${esc(n)}</div><div class="track">` +
         byName[n].map(m => { const s = m.start_date ? pct(m.start_date) : pct(m.end_date) - 3; const e = m.end_date ? pct(m.end_date) : pct(today);
@@ -779,7 +826,7 @@ VIEWS.readings = async () => {
       <input name="other" placeholder="What was measured" ${t?'hidden':''} value="${t?'':esc(type)}" maxlength="60">
       <input name="date" class="d" value="${today()}" placeholder="YYYY-MM-DD"><input name="time" class="t" value="${nowHM()}" placeholder="HH:MM">
       <input name="reading" class="n" inputmode="decimal" placeholder="${t&&t.two?'top':'reading'}" title="for blood pressure, the top number (systolic)" autocomplete="off">
-      <span id="rtwo" ${t&&t.two?'':'hidden'}>/ <input name="reading2" class="n" inputmode="decimal" placeholder="bottom" title="the bottom number (diastolic)" autocomplete="off"> <input name="pulse" class="n" inputmode="decimal" placeholder="pulse" autocomplete="off" title="optional; saved as its own pulse reading"></span>
+      <span id="rtwo" ${t&&t.two?'':'hidden'}><span class="slash">/</span> <input name="reading2" class="n" inputmode="decimal" placeholder="bottom" title="the bottom number (diastolic)" autocomplete="off"> <input name="pulse" class="n" inputmode="decimal" placeholder="pulse" autocomplete="off" title="optional; saved as its own pulse reading"></span>
       <input name="unit" class="u" value="${esc(t?t.unit:'')}" placeholder="unit"><input name="notes" placeholder="Notes (optional)" maxlength="300">
       <button class="btn primary">Add</button></form><div class="muted small" id="rmsg"></div></div>`;
   if(!kinds.length) html += '<div class="panel"><div class="empty">No readings yet. Add one above, or paste a list from a notebook or a meter\'s export.</div></div>';
@@ -1176,11 +1223,83 @@ const BULK_ASK = 25;       // this many or more: ask first, saying how many
 const BULK_PARALLEL = 3;   // files sent at once
 function chooseUpload(){
   show('<h2>Add records</h2>', `<div class="choices">
+    <button id="pick-photo"><b>📷 Photos of a paper record</b><span class="small muted">Take a photo of each page with the phone or tablet camera (or pick photos). The pages go in as one document, read like a scan.</span></button>
     <button id="pick-files"><b>Files</b><span class="small muted">PDFs, photos or scans, a health summary export, or a zip of records. Pick as many as you like.</span></button>
     <button id="pick-dir"><b>A whole folder</b><span class="small muted">Everything in it and in its subfolders. Files that aren't records (programs, DICOM image slices, notes) are skipped.</span></button></div>
     <p class="small muted">You can also drag files or whole folders onto this page. Each file is read and sorted on its own; anything unclear goes to <b>Needs review</b>. Files already in the records are noticed and not added twice.</p>`);
+  $('#pick-photo').onclick = () => photoRecord();
   $('#pick-files').onclick = () => { dlg.close(); $('#uplf').click(); };
   $('#pick-dir').onclick = () => { dlg.close(); $('#upld').click(); };
+}
+// ---------- photographing a paper record: the pages become one PDF, read like a scan ----------
+const PHOTO_MAX = 2200;     // longest side in pixels: sharp enough to read, small enough to send from a phone
+const PHOTO_PAGES = 40;
+async function photoPage(file){
+  const bmp = await createImageBitmap(file, {imageOrientation:'from-image'});   // upright, however the phone was held
+  const k = Math.min(1, PHOTO_MAX / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+  if(bmp.close) bmp.close();
+  const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.85));
+  if(!blob) throw new Error('not a picture');
+  return {bytes: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height, url: URL.createObjectURL(blob)};
+}
+// a PDF with one JPEG per page, each page the photo's shape and 8.5 inches wide
+function pagesToPdf(pages){
+  const enc = new TextEncoder(), parts = [], offs = []; let len = 0;
+  const put = x => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+  const obj = (n, body) => { offs[n] = len; put(`${n} 0 obj\n`); body(); put('\nendobj\n'); };
+  put('%PDF-1.4\n%âãÏÓ\n');
+  const total = 3 + pages.length * 3, kids = pages.map((_, i) => `${3 + i*3} 0 R`).join(' ');
+  obj(1, () => put('<< /Type /Catalog /Pages 2 0 R >>'));
+  obj(2, () => put(`<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`));
+  pages.forEach((p, i) => {
+    const n = 3 + i*3, W = 612, Hh = Math.max(1, Math.round(612 * p.h / p.w)), draw = `q ${W} 0 0 ${Hh} 0 0 cm /Im0 Do Q`;
+    obj(n, () => put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${Hh}] /Resources << /XObject << /Im0 ${n+2} 0 R >> >> /Contents ${n+1} 0 R >>`));
+    obj(n+1, () => put(`<< /Length ${draw.length} >>\nstream\n${draw}\nendstream`));
+    obj(n+2, () => { put(`<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.bytes.length} >>\nstream\n`); put(p.bytes); put('\nendstream'); });
+  });
+  const xref = len;
+  put(`xref\n0 ${total}\n0000000000 65535 f \n` + offs.slice(1, total).map(o => String(o).padStart(10, '0') + ' 00000 n \n').join(''));
+  put(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, {type:'application/pdf'});
+}
+function photoRecord(){
+  const pages = [];
+  const cam = Object.assign(document.createElement('input'), {type:'file', accept:'image/*'}); cam.setAttribute('capture', 'environment');
+  const pick = Object.assign(document.createElement('input'), {type:'file', accept:'image/*', multiple:true});
+  show('<h2>Photos of a paper record</h2>', `<p class="small muted" style="margin-top:0">Take a photo of each page: flat, in good light, filling the frame. The pages go in together as one document and are read like a scan; anything unclear goes to <b>Needs review</b>.</p>
+    <div class="row-actions" style="justify-content:flex-start;flex-wrap:wrap;margin-top:0"><button class="btn primary" id="ph-cam">📷 Take a photo</button><button class="btn" id="ph-pick">Choose photos</button></div>
+    <div class="ph-pages" id="ph-pages"></div><p class="muted small" id="ph-msg"></p>
+    <div class="row-actions"><button class="btn" id="ph-cancel">Cancel</button><button class="btn primary" id="ph-send" disabled>Add as one document</button></div>`);
+  const free = () => pages.forEach(p => URL.revokeObjectURL(p.url));
+  dlg.addEventListener('close', free, {once:true});   // however the dialog is closed
+  const draw = () => {
+    $('#ph-pages').innerHTML = pages.map((p, i) => `<figure><img src="${p.url}" alt="Page ${i+1}"><figcaption>Page ${i+1}<button class="btn" data-ph-rm="${i}" title="Remove this page">✕</button></figcaption></figure>`).join('');
+    $('#ph-pages').querySelectorAll('[data-ph-rm]').forEach(b => b.onclick = () => { const [p] = pages.splice(+b.dataset.phRm, 1); URL.revokeObjectURL(p.url); draw(); });
+    $('#ph-send').disabled = !pages.length;
+    $('#ph-send').textContent = pages.length > 1 ? `Add as one document (${pages.length} pages)` : 'Add as one document';
+    $('#ph-cam').textContent = pages.length ? '📷 Add another page' : '📷 Take a photo';
+  };
+  const add = async files => {
+    $('#ph-msg').textContent = files.length ? 'Getting the pages ready…' : '';
+    const bad = [];
+    for(const f of files){
+      if(pages.length >= PHOTO_PAGES){ bad.push(`up to ${PHOTO_PAGES} pages at a time`); break; }
+      try{ pages.push(await photoPage(f)); }catch(e){ bad.push(`${f.name} couldn't be read as a picture`); }
+    }
+    $('#ph-msg').textContent = bad.join('; ');
+    draw();
+  };
+  cam.onchange = () => { add([...cam.files]); cam.value = ''; };
+  pick.onchange = () => { add([...pick.files]); pick.value = ''; };
+  $('#ph-cam').onclick = () => cam.click();
+  $('#ph-pick').onclick = () => pick.click();
+  $('#ph-cancel').onclick = () => dlg.close();
+  $('#ph-send').onclick = () => {
+    const file = new File([pagesToPdf(pages)], `Photo of a paper record ${today()} ${nowHM().replace(':', '-')}.pdf`, {type:'application/pdf'});
+    dlg.close(); uploadEach([file]);
+  };
 }
 // every file in what was dropped, looking inside dropped folders (and their subfolders)
 async function droppedFiles(dt){
@@ -1223,7 +1342,7 @@ let HEALTH = {can_read: true};
 async function checkHealth(){
   try{ HEALTH = await api('/api/health'); }catch(e){ return; }
   const b = $('#upl');
-  b.innerHTML = HEALTH.can_read ? '＋ Add records' : '＋ Add records <span title="The server can\'t read files yet">⚠</span>';
+  b.innerHTML = '＋<span class="lbl"> Add records</span><span class="lbl-sm"> Add</span>' + (HEALTH.can_read ? '' : ' <span title="The server can\'t read files yet">⚠</span>');
 }
 function showSetupHelp(){
   show('<h2>The dashboard can\'t read files yet</h2>', `<p>Files you add are saved, but the server is missing the programs that read PDFs and scans (${esc(HEALTH.missing.join(', '))}).

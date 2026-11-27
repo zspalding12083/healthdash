@@ -73,6 +73,13 @@ module quirks), capped at 500,000 characters per paste, and refused lines are ec
 characters, escaped on the page. `days=` must be a whole number of days up to 100 years and `types=`
 is only compared. The printout uses the same escaped, nonce-only code as the others.
 
+## Phone layout and photos (2026-11-27)
+
+No new server routes. Photos of a paper record are turned into a PDF in the browser and sent through
+the same upload as any file, so the same first-bytes check, size handling and background reading
+apply; the photos never leave the page except as that PDF. Page thumbnails are local `blob:` URLs,
+released when the dialog closes or a page is removed.
+
 ## Browser plugin removed (2026-11-27)
 
 The Firefox plugin and its keys are gone: there is no `Authorization: Bearer` access any more, no

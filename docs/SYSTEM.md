@@ -50,7 +50,7 @@ imported data is kept tidy, and how to run and change it. The README covers inst
 | `auth.py` | Optional sign-in: whether it is on, accounts (salted PBKDF2), sessions (HttpOnly, SameSite=Strict cookie). |
 | `config.py` | Settings from `data/local.json`. |
 | `doctor.py`, `macos.py`, `wipe.py`, `demo.py` | `check`, the macOS service, starting over, and the sample data. |
-| `static/index.html` | The whole interface, no build step. |
+| `static/index.html` | The whole interface, no build step. Under 700px wide it switches to a phone layout (tables shown as cards by `cardTables`, full-screen dialogs). Photos of a paper record become one PDF in the browser (`photoPage`, `pagesToPdf`) before the normal upload. |
 
 ## Data model
 

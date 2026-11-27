@@ -87,6 +87,12 @@ Mac on the home network.
   sorted by kind, date and facility, its lab values are pulled out, and it is
   filed. Anything it isn't sure about is put to you as a question, with its best guess filled in.
   Copies of documents already filed are caught and lab values are never added twice.
+- **Photos of a paper record**: under **Add records** on a phone or tablet, take a photo of each page
+  (or pick photos). Pages can be removed before sending; they go in as one PDF, made in the browser
+  (turned upright and shrunk to a readable size first), and are read like any scan.
+- **On a phone**: the header shrinks to the essentials, the tabs scroll sideways, tables become one
+  card per entry (each value under its column's name), dialogs fill the screen, and text fields are
+  large enough that the phone doesn't zoom in.
 - **Needs review**: uploads with open questions, new files the catalog doesn't know yet, and
   entries filled in from records that didn't say for sure. Each says in plain words what to check
   (usually a date), and "See the source" opens the original at the right pages.
